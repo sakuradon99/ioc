@@ -24,6 +24,7 @@ func NewContainerImpl() *ContainerImpl {
 	return &ContainerImpl{
 		objectPool:    NewObjectPool(conditionExecutor),
 		interfacePool: NewInterfacePool(),
+		configFetcher: configFetcher,
 	}
 }
 
