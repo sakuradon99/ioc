@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-var exprReg = regexp.MustCompile(`#(\w+)`)
+var exprReg = regexp.MustCompile(`#([a-zA-Z0-9_.]+)`)
 
 type ConditionExecutor interface {
 	Execute(condition string) (bool, error)
@@ -30,10 +30,11 @@ func (c *ConditionExecutorImpl) Execute(condition string) (bool, error) {
 	matches := exprReg.FindAllString(condition, -1)
 	parameters := make(map[string]any, len(matches)+1)
 	parameters["nil"] = nil
-	for _, match := range matches {
+	for i, match := range matches {
 		v := viper.Get(match[1:])
-		parameters[match[1:]] = v
-		condition = strings.ReplaceAll(condition, match, match[1:])
+		p := fmt.Sprintf("p%d", i)
+		parameters[p] = v
+		condition = strings.ReplaceAll(condition, match, p)
 	}
 
 	expression, err := govaluate.NewEvaluableExpression(condition)
