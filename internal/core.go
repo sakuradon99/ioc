@@ -49,9 +49,8 @@ func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
 		if ct.Kind() != reflect.Func {
 			return fmt.Errorf("unsupported constructor type %s", ct.Kind())
 		}
-		if ct.NumOut() > 2 || ct.NumIn() == 0 ||
-			ct.NumOut() == 2 && ct.Out(1).Name() != "error" ||
-			ct.Out(0).Name() != ot.Name() {
+		if ct.NumOut() > 2 || ct.NumOut() == 0 ||
+			ct.NumOut() == 2 && ct.Out(1).Name() != "error" {
 			return fmt.Errorf("unsupported constructor")
 		}
 
