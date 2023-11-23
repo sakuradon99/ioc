@@ -14,7 +14,7 @@ type Container interface {
 type ContainerImpl struct {
 	objectPool    *ObjectPool
 	interfacePool *InterfacePool
-	configFetcher *ConfigFetcherImpl
+	configFetcher ConfigFetcher
 	loaded        bool
 }
 
@@ -24,7 +24,6 @@ func NewContainerImpl() *ContainerImpl {
 	return &ContainerImpl{
 		objectPool:    NewObjectPool(conditionExecutor),
 		interfacePool: NewInterfacePool(),
-		configFetcher: configFetcher,
 	}
 }
 

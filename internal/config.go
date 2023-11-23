@@ -1,7 +1,6 @@
 package ioc
 
 import (
-	"flag"
 	"github.com/spf13/viper"
 )
 
@@ -13,6 +12,7 @@ type ConfigFetcher interface {
 }
 
 type ConfigFetcherImpl struct {
+	loaded bool
 }
 
 func NewConfigFetcher() *ConfigFetcherImpl {
@@ -20,10 +20,6 @@ func NewConfigFetcher() *ConfigFetcherImpl {
 }
 
 func (c *ConfigFetcherImpl) Load() error {
-	if !flag.Parsed() {
-		flag.Parse()
-	}
-
 	viper.SetConfigFile(ConfigFile)
 	return viper.ReadInConfig()
 }
