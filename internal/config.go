@@ -5,7 +5,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-var configFile = flag.String("ioc.config", "./config/application.yaml", "config file path")
+var ConfigFile = "./config/application.yaml"
 
 type ConfigFetcher interface {
 	Load() error
@@ -24,7 +24,7 @@ func (c *ConfigFetcherImpl) Load() error {
 		flag.Parse()
 	}
 
-	viper.SetConfigFile(*configFile)
+	viper.SetConfigFile(ConfigFile)
 	return viper.ReadInConfig()
 }
 

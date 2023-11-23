@@ -16,3 +16,7 @@ func Register[T any](opts ...ioc.RegisterOption) any {
 func GetObject[T any](name string) (any, error) {
 	return iocContainer.GetObject(name, new(T))
 }
+
+func SetConfigFile(file string) {
+	ioc.ConfigFile = file
+}
