@@ -56,10 +56,23 @@ func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
 
 		var dependencies []Dependency
 		for i := 0; i < ct.NumIn(); i++ {
+			param := ct.In(i)
+			var isInterface bool
+			if param.Kind() == reflect.Interface {
+				isInterface = true
+			} else if param.Kind() == reflect.Ptr {
+				param = param.Elem()
+			} else {
+				return fmt.Errorf(
+					"unsupported constructor param type <%s>, only pointer and interface type are allowed",
+					param.Kind(),
+				)
+			}
+
 			dependencies = append(dependencies, Dependency{
-				isInterface: ct.In(i).Kind() == reflect.Interface,
-				pkgPath:     ct.In(i).PkgPath(),
-				name:        ct.In(i).Name(),
+				isInterface: isInterface,
+				pkgPath:     param.PkgPath(),
+				name:        param.Name(),
 			})
 		}
 		obj = NewObject(
