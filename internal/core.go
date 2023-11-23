@@ -67,6 +67,7 @@ func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
 			objectID,
 			options.Name,
 			options.ConditionExpr,
+			options.Optional,
 			dependencies,
 			NewConstructorInstanceBuilder(options.Constructor),
 		)
@@ -102,6 +103,7 @@ func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
 			objectID,
 			options.Name,
 			options.ConditionExpr,
+			options.Optional,
 			dependencies,
 			NewFieldInstanceBuilder(ot, injectFieldIndexes),
 		)

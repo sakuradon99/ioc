@@ -20,6 +20,7 @@ func NewObject(
 	id string,
 	name string,
 	condition string,
+	optional bool,
 	dependencies []Dependency,
 	instanceBuilder InstanceBuilder,
 ) *Object {
@@ -27,6 +28,7 @@ func NewObject(
 		id:              id,
 		name:            name,
 		condition:       condition,
+		optional:        optional,
 		dependencies:    dependencies,
 		instanceBuilder: instanceBuilder,
 	}

@@ -1,6 +1,6 @@
 package ioc
 
-import ioc "ioc/internal"
+import ioc "github.com/sakuradon99/ioc/internal"
 
 func Name(name string) ioc.RegisterOption {
 	return func(o *ioc.RegisterOptions) {
