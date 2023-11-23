@@ -22,7 +22,7 @@ func Optional() ioc.RegisterOption {
 
 func Constructor(constructor any) ioc.RegisterOption {
 	return func(o *ioc.RegisterOptions) {
-		o.Constructor = true
+		o.Constructor = constructor
 	}
 }
 
