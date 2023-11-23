@@ -50,7 +50,7 @@ func NewFieldInstanceBuilder(ot reflect.Type, injectFieldIndexes []int) *FieldIn
 func (b *FieldInstanceBuilder) Build(args []any) (any, error) {
 	ov := reflect.New(b.ot)
 	for index, arg := range args {
-		assignPrivateField(ov.Elem().Field(index), arg)
+		assignPrivateField(ov.Elem().Field(b.injectFieldIndexes[index]), arg)
 	}
 	return ov.Interface(), nil
 }
