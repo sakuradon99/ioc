@@ -8,9 +8,9 @@ func Name(name string) ioc.RegisterOption {
 	}
 }
 
-func Implement(inf any) ioc.RegisterOption {
+func Implement[I any]() ioc.RegisterOption {
 	return func(o *ioc.RegisterOptions) {
-		o.ImplementInterfaces = append(o.ImplementInterfaces, inf)
+		o.ImplementInterfaces = append(o.ImplementInterfaces, new(I))
 	}
 }
 
