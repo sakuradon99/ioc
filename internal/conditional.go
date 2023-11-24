@@ -3,7 +3,6 @@ package ioc
 import (
 	"fmt"
 	"github.com/Knetic/govaluate"
-	"github.com/spf13/viper"
 	"regexp"
 	"strings"
 )
@@ -31,7 +30,11 @@ func (c *ConditionExecutorImpl) Execute(condition string) (bool, error) {
 	parameters := make(map[string]any, len(matches)+1)
 	parameters["nil"] = nil
 	for i, match := range matches {
-		v := viper.Get(match[1:])
+		v, _, err := c.configFetcher.Fetch(match[1:])
+		if err != nil {
+			return false, err
+		}
+
 		p := fmt.Sprintf("p%d", i)
 		parameters[p] = v
 		condition = strings.ReplaceAll(condition, match, p)
