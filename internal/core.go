@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 )
 
 type Container interface {
@@ -15,7 +16,7 @@ type ContainerImpl struct {
 	objectPool    *ObjectPool
 	interfacePool *InterfacePool
 	configFetcher ConfigFetcher
-	loaded        bool
+	mu            sync.Mutex
 }
 
 func NewContainerImpl() *ContainerImpl {
@@ -29,6 +30,9 @@ func NewContainerImpl() *ContainerImpl {
 }
 
 func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	var options RegisterOptions
 	for _, opt := range opts {
 		opt(&options)
@@ -142,6 +146,9 @@ func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
 }
 
 func (c *ContainerImpl) GetObject(name string, target any) (any, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	err := c.load()
 	if err != nil {
 		return nil, err
@@ -162,15 +169,6 @@ func (c *ContainerImpl) GetObject(name string, target any) (any, error) {
 }
 
 func (c *ContainerImpl) load() error {
-	if c.loaded {
-		return nil
-	}
-
-	//err := c.configFetcher.Load()
-	//if err != nil {
-	//	return err
-	//}
-
 	requiredObjects := c.objectPool.List()
 
 	for _, object := range requiredObjects {
