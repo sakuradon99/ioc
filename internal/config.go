@@ -7,8 +7,7 @@ import (
 var ConfigFile = "./config/application.yaml"
 
 type ConfigFetcher interface {
-	Load() error
-	Fetch(expr string) (any, bool)
+	Fetch(expr string) (any, bool, error)
 }
 
 type ConfigFetcherImpl struct {
@@ -19,12 +18,16 @@ func NewConfigFetcher() *ConfigFetcherImpl {
 	return &ConfigFetcherImpl{}
 }
 
-func (c *ConfigFetcherImpl) Load() error {
-	viper.SetConfigFile(ConfigFile)
-	return viper.ReadInConfig()
-}
+func (c *ConfigFetcherImpl) Fetch(expr string) (any, bool, error) {
+	if !c.loaded {
+		viper.SetConfigFile(ConfigFile)
+		err := viper.ReadInConfig()
+		if err != nil {
+			return nil, false, err
+		}
+		c.loaded = true
+	}
 
-func (c *ConfigFetcherImpl) Fetch(expr string) (any, bool) {
 	val := viper.Get(expr)
-	return val, val != nil
+	return val, val != nil, nil
 }

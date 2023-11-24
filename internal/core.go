@@ -166,10 +166,10 @@ func (c *ContainerImpl) load() error {
 		return nil
 	}
 
-	err := c.configFetcher.Load()
-	if err != nil {
-		return err
-	}
+	//err := c.configFetcher.Load()
+	//if err != nil {
+	//	return err
+	//}
 
 	requiredObjects := c.objectPool.List()
 
@@ -180,7 +180,7 @@ func (c *ContainerImpl) load() error {
 		if object.optional {
 			continue
 		}
-		err = c.init(object)
+		err := c.init(object)
 		if err != nil {
 			return err
 		}
@@ -256,12 +256,27 @@ func (c *ContainerImpl) init(object *Object) error {
 	it := reflect.TypeOf(instance).Elem()
 	for i := 0; i < it.NumField(); i++ {
 		field := it.Field(i)
-		if configExpr, ok := field.Tag.Lookup("value"); ok {
-			value, exist := c.configFetcher.Fetch(configExpr)
-			if !exist {
-				return fmt.Errorf("config %s not found", configExpr)
+		if valueExpr, ok := field.Tag.Lookup("value"); ok {
+			arr := strings.Split(valueExpr, ";")
+			valueKey := arr[0]
+			value, exist, err := c.configFetcher.Fetch(valueKey)
+			if err != nil {
+				return err
 			}
-			assignPrivateField(reflect.ValueOf(instance).Elem().Field(i), value)
+			var optional bool
+			if len(arr) > 1 {
+				for _, s := range arr {
+					if s == "optional" {
+						optional = true
+					}
+				}
+			}
+			if !optional && !exist {
+				return fmt.Errorf("value <%s> not found", valueExpr)
+			}
+			if exist {
+				assignPrivateField(reflect.ValueOf(instance).Elem().Field(i), value)
+			}
 		}
 	}
 
