@@ -13,19 +13,21 @@ type Container interface {
 }
 
 type ContainerImpl struct {
-	objectPool    *ObjectPool
-	interfacePool *InterfacePool
-	configFetcher ConfigFetcher
-	mu            sync.Mutex
+	objectPool        *ObjectPool
+	interfacePool     *InterfacePool
+	configFetcher     ConfigFetcher
+	conditionExecutor ConditionExecutor
+	mu                sync.Mutex
 }
 
 func NewContainerImpl() *ContainerImpl {
 	configFetcher := NewConfigFetcher()
 	conditionExecutor := NewConditionExecutorImpl(configFetcher)
 	return &ContainerImpl{
-		objectPool:    NewObjectPool(conditionExecutor),
-		interfacePool: NewInterfacePool(),
-		configFetcher: configFetcher,
+		objectPool:        NewObjectPool(conditionExecutor),
+		interfacePool:     NewInterfacePool(),
+		configFetcher:     configFetcher,
+		conditionExecutor: conditionExecutor,
 	}
 }
 
@@ -178,6 +180,15 @@ func (c *ContainerImpl) load() error {
 		if object.optional {
 			continue
 		}
+		if object.condition != "" {
+			ok, err := c.conditionExecutor.Execute(object.condition)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
+		}
 		err := c.init(object)
 		if err != nil {
 			return err
@@ -209,19 +220,18 @@ func (c *ContainerImpl) init(object *Object) error {
 				return fmt.Errorf("missing implementation for interface %s", interfaceID)
 			}
 
-			var findImpl bool
 			for _, objectID := range objectIDs {
 				if strings.HasSuffix(objectID, "-"+dependency.alisa) {
 					dependencyID = objectID
-					dependencyObject, err = c.objectPool.Get(dependencyID)
+					implObj, err := c.objectPool.Get(dependencyID)
 					if err != nil {
 						return err
 					}
-					if dependencyObject != nil {
-						if findImpl {
+					if implObj != nil {
+						if dependencyObject != nil {
 							return fmt.Errorf("ambiguous implementation for interface %s", interfaceID)
 						}
-						findImpl = true
+						dependencyObject = implObj
 					}
 				}
 			}
