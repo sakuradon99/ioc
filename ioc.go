@@ -17,6 +17,6 @@ func GetObject[T any](name string) (any, error) {
 	return iocContainer.GetObject(name, new(T))
 }
 
-func SetConfigFile(file string) {
-	ioc.ConfigFile = file
+func SetSourceFile(file string) {
+	ioc.SourceFile = file
 }

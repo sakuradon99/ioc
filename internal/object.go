@@ -88,4 +88,5 @@ type Dependency struct {
 	pkgPath     string
 	name        string
 	alisa       string
+	optional    bool
 }

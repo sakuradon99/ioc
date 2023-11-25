@@ -6,10 +6,9 @@ import (
 )
 
 func assignPrivateField(field reflect.Value, val any) {
-	field = reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem()
-	if v, ok := val.(reflect.Value); ok {
-		field.Set(v)
+	if val == nil {
 		return
 	}
+	field = reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem()
 	field.Set(reflect.ValueOf(val))
 }

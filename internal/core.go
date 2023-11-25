@@ -15,18 +15,18 @@ type Container interface {
 type ContainerImpl struct {
 	objectPool        *ObjectPool
 	interfacePool     *InterfacePool
-	configFetcher     ConfigFetcher
+	sourceManager     SourceManager
 	conditionExecutor ConditionExecutor
 	mu                sync.Mutex
 }
 
 func NewContainerImpl() *ContainerImpl {
-	configFetcher := NewConfigFetcher()
-	conditionExecutor := NewConditionExecutorImpl(configFetcher)
+	sourceManager := NewSourceManagerImpl()
+	conditionExecutor := NewConditionExecutorImpl(sourceManager)
 	return &ContainerImpl{
 		objectPool:        NewObjectPool(conditionExecutor),
 		interfacePool:     NewInterfacePool(),
-		configFetcher:     configFetcher,
+		sourceManager:     sourceManager,
 		conditionExecutor: conditionExecutor,
 	}
 }
@@ -94,7 +94,8 @@ func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
 		var dependencies []Dependency
 		for i := 0; i < ot.NumField(); i++ {
 			field := ot.Field(i)
-			if alisa, ok := field.Tag.Lookup("inject"); ok {
+			if injectTag, ok := field.Tag.Lookup("inject"); ok {
+				tag := ParseInjectTag(injectTag)
 				injectFieldIndexes = append(injectFieldIndexes, i)
 				ft := field.Type
 				var isInterface bool
@@ -113,7 +114,8 @@ func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
 					isInterface: isInterface,
 					pkgPath:     ft.PkgPath(),
 					name:        ft.Name(),
-					alisa:       alisa,
+					alisa:       tag.Value(),
+					optional:    tag.Optional(),
 				})
 			}
 		}
@@ -211,6 +213,7 @@ func (c *ContainerImpl) init(object *Object) error {
 		var dependencyObject *Object
 		if dependency.isInterface {
 			interfaceID := genInterfaceID(dependency.pkgPath, dependency.name)
+			dependencyID = interfaceID
 			objectIDs, err := c.interfacePool.GetImplementObjectIDs(interfaceID)
 			if err != nil {
 				return err
@@ -245,6 +248,10 @@ func (c *ContainerImpl) init(object *Object) error {
 		}
 
 		if dependencyObject == nil {
+			if dependency.optional {
+				args = append(args, nil)
+				continue
+			}
 			return fmt.Errorf("missing dependency object %s", dependencyID)
 		}
 		if !dependencyObject.inited {
@@ -265,21 +272,12 @@ func (c *ContainerImpl) init(object *Object) error {
 	for i := 0; i < it.NumField(); i++ {
 		field := it.Field(i)
 		if valueExpr, ok := field.Tag.Lookup("value"); ok {
-			arr := strings.Split(valueExpr, ";")
-			valueKey := arr[0]
-			value, exist, err := c.configFetcher.Fetch(valueKey)
+			tag := ParseValueTag(valueExpr)
+			value, exist, err := c.sourceManager.GetValue(tag.Value())
 			if err != nil {
 				return err
 			}
-			var optional bool
-			if len(arr) > 1 {
-				for _, s := range arr {
-					if s == "optional" {
-						optional = true
-					}
-				}
-			}
-			if !optional && !exist {
+			if !tag.Optional() && !exist {
 				return fmt.Errorf("value <%s> not found", valueExpr)
 			}
 			if exist {

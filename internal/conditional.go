@@ -14,11 +14,11 @@ type ConditionExecutor interface {
 }
 
 type ConditionExecutorImpl struct {
-	configFetcher ConfigFetcher
+	sourceManager SourceManager
 }
 
-func NewConditionExecutorImpl(configFetcher ConfigFetcher) *ConditionExecutorImpl {
-	return &ConditionExecutorImpl{configFetcher: configFetcher}
+func NewConditionExecutorImpl(sourceManager SourceManager) *ConditionExecutorImpl {
+	return &ConditionExecutorImpl{sourceManager: sourceManager}
 }
 
 func (c *ConditionExecutorImpl) Execute(condition string) (bool, error) {
@@ -30,7 +30,7 @@ func (c *ConditionExecutorImpl) Execute(condition string) (bool, error) {
 	parameters := make(map[string]any, len(matches)+1)
 	parameters["nil"] = nil
 	for i, match := range matches {
-		v, _, err := c.configFetcher.Fetch(match[1:])
+		v, _, err := c.sourceManager.GetValue(match[1:])
 		if err != nil {
 			return false, err
 		}
