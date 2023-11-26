@@ -13,8 +13,8 @@ func Register[T any](opts ...ioc.RegisterOption) any {
 	return nil
 }
 
-func GetObject[T any](name string) (any, error) {
-	return iocContainer.GetObject(name, new(T))
+func GetObject[T any](alisa string) (any, error) {
+	return iocContainer.GetObject(alisa, new(T))
 }
 
 func SetSourceFile(file string) {

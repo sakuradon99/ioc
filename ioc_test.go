@@ -58,7 +58,8 @@ func (f *F) Echo2() string {
 type App struct {
 	a  *A `inject:""`
 	b  *B `inject:";optional"`
-	i1 I1 `inject:"c"`
+	ic I1 `inject:"c"`
+	id I1 `inject:"d"`
 	i2 I2 `inject:""`
 }
 
@@ -71,10 +72,10 @@ func Test_IOC(t *testing.T) {
 		iocContainer = ioc.NewContainerImpl()
 		SetSourceFile("testdata/config.yaml")
 		Register[A]()
-		Register[C](Name("c"), Implement[I1]())
-		Register[D](Name("d"), Implement[I1]())
-		Register[E](Implement[I2](), Conditional("#use_e == true"))
-		Register[F](Implement[I2](), Conditional("#use_e != true"))
+		Register[C](Name("c"))
+		Register[D](Name("d"))
+		Register[E](Conditional("#use_e == true"))
+		Register[F](Conditional("#use_e != true"))
 		Register[App]()
 
 		obj, err := GetObject[App]("")
@@ -88,7 +89,9 @@ func Test_IOC(t *testing.T) {
 
 		assert.Equal(t, "alice", app.TestA())
 		assert.Equal(t, true, app.b == nil)
-		assert.Equal(t, "c", app.i1.Echo1())
+		assert.Equal(t, "c", app.ic.Echo1())
+		assert.Equal(t, "d", app.id.Echo1())
+		assert.Equal(t, "e", app.i2.Echo2())
 	})
 
 	t.Run("wrong source file", func(t *testing.T) {

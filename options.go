@@ -4,13 +4,7 @@ import ioc "github.com/sakuradon99/ioc/internal"
 
 func Name(name string) ioc.RegisterOption {
 	return func(o *ioc.RegisterOptions) {
-		o.Name = name
-	}
-}
-
-func Implement[I any]() ioc.RegisterOption {
-	return func(o *ioc.RegisterOptions) {
-		o.ImplementInterfaces = append(o.ImplementInterfaces, new(I))
+		o.Alisa = name
 	}
 }
 

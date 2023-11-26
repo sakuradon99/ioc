@@ -3,35 +3,35 @@ package ioc
 import (
 	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 )
 
 type Container interface {
-	Register(object any, opts ...RegisterOption) error
-	GetObject(name string, target any) (any, error)
+	Register(ref any, opts ...RegisterOption) error
+	GetObject(name string, ref any) (any, error)
 }
 
 type ContainerImpl struct {
-	objectPool        *ObjectPool
-	interfacePool     *InterfacePool
-	sourceManager     SourceManager
-	conditionExecutor ConditionExecutor
-	mu                sync.Mutex
+	objectBuilderFactory *ObjectBuilderFactory
+	objectPool           *ObjectPool
+	sourceManager        SourceManager
+	conditionExecutor    ConditionExecutor
+	mu                   sync.Mutex
 }
 
 func NewContainerImpl() *ContainerImpl {
 	sourceManager := NewSourceManagerImpl()
 	conditionExecutor := NewConditionExecutorImpl(sourceManager)
+	objectPool := NewObjectPool(conditionExecutor)
 	return &ContainerImpl{
-		objectPool:        NewObjectPool(conditionExecutor),
-		interfacePool:     NewInterfacePool(),
-		sourceManager:     sourceManager,
-		conditionExecutor: conditionExecutor,
+		objectBuilderFactory: NewObjectBuilderFactory(),
+		objectPool:           objectPool,
+		sourceManager:        sourceManager,
+		conditionExecutor:    conditionExecutor,
 	}
 }
 
-func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
+func (c *ContainerImpl) Register(ref any, opts ...RegisterOption) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -40,116 +40,21 @@ func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
 		opt(&options)
 	}
 
-	ot := reflect.TypeOf(object)
-
-	if ot.Kind() != reflect.Ptr {
-		return fmt.Errorf("unsupported register type %s", ot.Kind())
-	}
-
-	ot = ot.Elem()
-	objectID := genObjectID(ot.PkgPath(), ot.Name(), options.Name)
-
-	var obj *Object
-	if options.Constructor != nil {
-		ct := reflect.TypeOf(options.Constructor)
-		if ct.Kind() != reflect.Func {
-			return fmt.Errorf("unsupported constructor type %s", ct.Kind())
-		}
-		if ct.NumOut() > 2 || ct.NumOut() == 0 ||
-			ct.NumOut() == 2 && ct.Out(1).Name() != "error" {
-			return fmt.Errorf("unsupported constructor")
-		}
-
-		var dependencies []Dependency
-		for i := 0; i < ct.NumIn(); i++ {
-			param := ct.In(i)
-			var isInterface bool
-			if param.Kind() == reflect.Interface {
-				isInterface = true
-			} else if param.Kind() == reflect.Ptr {
-				param = param.Elem()
-			} else {
-				return fmt.Errorf(
-					"unsupported constructor param type <%s>, only pointer and interface type are allowed",
-					param.Kind(),
-				)
-			}
-
-			dependencies = append(dependencies, Dependency{
-				isInterface: isInterface,
-				pkgPath:     param.PkgPath(),
-				name:        param.Name(),
-			})
-		}
-		obj = NewObject(
-			objectID,
-			options.Name,
-			options.ConditionExpr,
-			options.Optional,
-			dependencies,
-			NewConstructorInstanceBuilder(options.Constructor),
-		)
-	} else {
-		var injectFieldIndexes []int
-		var dependencies []Dependency
-		for i := 0; i < ot.NumField(); i++ {
-			field := ot.Field(i)
-			if injectTag, ok := field.Tag.Lookup("inject"); ok {
-				tag := ParseInjectTag(injectTag)
-				injectFieldIndexes = append(injectFieldIndexes, i)
-				ft := field.Type
-				var isInterface bool
-				if ft.Kind() == reflect.Interface {
-					isInterface = true
-				} else if ft.Kind() == reflect.Ptr {
-					ft = ft.Elem()
-				} else {
-					return fmt.Errorf(
-						"unsupported inject field type <%s>, only pointer and interface type are allowed",
-						ft.Kind(),
-					)
-				}
-
-				dependencies = append(dependencies, Dependency{
-					isInterface: isInterface,
-					pkgPath:     ft.PkgPath(),
-					name:        ft.Name(),
-					alisa:       tag.Value(),
-					optional:    tag.Optional(),
-				})
-			}
-		}
-		obj = NewObject(
-			objectID,
-			options.Name,
-			options.ConditionExpr,
-			options.Optional,
-			dependencies,
-			NewFieldInstanceBuilder(ot, injectFieldIndexes),
-		)
-	}
-
-	err := c.objectPool.Add(obj)
+	ob := c.objectBuilderFactory.GetBuilder(options)
+	object, err := ob.Build(ref, options)
 	if err != nil {
 		return err
 	}
 
-	for _, implementInterface := range options.ImplementInterfaces {
-		it := reflect.TypeOf(implementInterface).Elem()
-		infID := genInterfaceID(it.PkgPath(), it.Name())
-		c.interfacePool.Add(Interface{
-			id: infID,
-		})
-		err = c.interfacePool.BindImplement(infID, objectID)
-		if err != nil {
-			return err
-		}
+	err = c.objectPool.Add(object)
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (c *ContainerImpl) GetObject(name string, target any) (any, error) {
+func (c *ContainerImpl) GetObject(alisa string, ref any) (any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -158,15 +63,17 @@ func (c *ContainerImpl) GetObject(name string, target any) (any, error) {
 		return nil, err
 	}
 
-	tt := reflect.TypeOf(target).Elem()
-	id := genObjectID(tt.PkgPath(), tt.Name(), name)
+	_, _, objectID, err := parseObjectRef(ref, alisa)
+	if err != nil {
+		return nil, err
+	}
 
-	object, err := c.objectPool.Get(id)
+	object, err := c.objectPool.Get(objectID)
 	if err != nil {
 		return nil, err
 	}
 	if object == nil {
-		return nil, fmt.Errorf("object %s not found", id)
+		return nil, fmt.Errorf("object %s not found", objectID)
 	}
 
 	return object.instance, nil
@@ -209,50 +116,41 @@ func (c *ContainerImpl) init(object *Object) error {
 	var args []any
 
 	for _, dependency := range object.dependencies {
-		var dependencyID string
 		var dependencyObject *Object
-		if dependency.isInterface {
-			interfaceID := genInterfaceID(dependency.pkgPath, dependency.name)
-			dependencyID = interfaceID
-			objectIDs, err := c.interfacePool.GetImplementObjectIDs(interfaceID)
+		if dependency.IsInterface() {
+			implObjects, err := c.objectPool.GetObjectsByInterface(dependency.Type())
 			if err != nil {
 				return err
 			}
 
-			if len(objectIDs) == 0 {
-				return fmt.Errorf("missing implementation for interface %s", interfaceID)
+			if len(implObjects) == 0 {
+				return fmt.Errorf("missing implementation for interface %s", dependency.ID())
 			}
 
-			for _, objectID := range objectIDs {
-				if strings.HasSuffix(objectID, "-"+dependency.alisa) {
-					dependencyID = objectID
-					implObj, err := c.objectPool.Get(dependencyID)
-					if err != nil {
-						return err
-					}
-					if implObj != nil {
-						if dependencyObject != nil {
-							return fmt.Errorf("ambiguous implementation for interface %s", interfaceID)
-						}
-						dependencyObject = implObj
-					}
+			for _, implObject := range implObjects {
+				if implObject.alisa != dependency.Alisa() {
+					continue
 				}
+
+				if dependencyObject != nil {
+					return fmt.Errorf("ambiguous implementation for interface %s", dependency.ID())
+				}
+				dependencyObject = implObject
 			}
 		} else {
-			dependencyID = genObjectID(dependency.pkgPath, dependency.name, dependency.alisa)
 			var err error
-			dependencyObject, err = c.objectPool.Get(dependencyID)
+			dependencyObject, err = c.objectPool.Get(dependency.ID())
 			if err != nil {
 				return err
 			}
 		}
 
 		if dependencyObject == nil {
-			if dependency.optional {
+			if dependency.Optional() {
 				args = append(args, nil)
 				continue
 			}
-			return fmt.Errorf("missing dependency object %s", dependencyID)
+			return fmt.Errorf("missing dependency object <%s>", dependency.ID())
 		}
 		if !dependencyObject.inited {
 			err := c.init(dependencyObject)

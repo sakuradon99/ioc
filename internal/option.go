@@ -1,7 +1,7 @@
 package ioc
 
 type RegisterOptions struct {
-	Name                string
+	Alisa               string
 	Optional            bool
 	ImplementInterfaces []any
 	Constructor         any
