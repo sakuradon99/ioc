@@ -7,8 +7,8 @@ import (
 
 type Object struct {
 	id              string
-	alisa           string
-	typeID          string
+	name            string
+	fullType        string
 	dependencies    []Dependency
 	instanceBuilder InstanceBuilder
 	ref             any
@@ -21,8 +21,8 @@ type Object struct {
 
 func NewObject(
 	id string,
-	alisa string,
-	typeID string,
+	name string,
+	fullType string,
 	condition string,
 	optional bool,
 	dependencies []Dependency,
@@ -31,8 +31,8 @@ func NewObject(
 ) *Object {
 	return &Object{
 		id:              id,
-		alisa:           alisa,
-		typeID:          typeID,
+		name:            name,
+		fullType:        fullType,
 		condition:       condition,
 		optional:        optional,
 		dependencies:    dependencies,
@@ -53,7 +53,7 @@ func NewFieldsObjectBuilder() *FieldsObjectBuilder {
 }
 
 func (f *FieldsObjectBuilder) Build(ref any, options RegisterOptions) (*Object, error) {
-	ot, typeID, objectID, err := parseObjectRef(ref, options.Alisa)
+	ot, typeID, objectID, err := parseObjectRef(ref, options.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (f *FieldsObjectBuilder) Build(ref any, options RegisterOptions) (*Object, 
 	}
 	obj := NewObject(
 		objectID,
-		options.Alisa,
+		options.Name,
 		typeID,
 		options.ConditionExpr,
 		options.Optional,
@@ -101,7 +101,7 @@ func NewConstructorObjectBuilder() *ConstructorObjectBuilder {
 }
 
 func (c *ConstructorObjectBuilder) Build(ref any, options RegisterOptions) (*Object, error) {
-	_, typeID, objectID, err := parseObjectRef(ref, options.Alisa)
+	_, typeID, objectID, err := parseObjectRef(ref, options.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func (c *ConstructorObjectBuilder) Build(ref any, options RegisterOptions) (*Obj
 	}
 	obj := NewObject(
 		objectID,
-		options.Alisa,
+		options.Name,
 		typeID,
 		options.ConditionExpr,
 		options.Optional,
@@ -211,14 +211,14 @@ func (p *ObjectPool) GetObjectsByInterface(interfaceType reflect.Type) ([]*Objec
 		return nil, fmt.Errorf("unsupported interface type <%s>", interfaceType.Kind())
 	}
 
-	interfaceID := generateTypeID(interfaceType)
+	interfaceID := generateFullType(interfaceType)
 	if _, ok := p.interfaceIDToObjectTypeToImpl[interfaceID]; !ok {
 		p.interfaceIDToObjectTypeToImpl[interfaceID] = make(map[string]bool)
 	}
 
 	var implObjects []*Object
 	for _, obj := range p.idToObject {
-		impl, ok := p.interfaceIDToObjectTypeToImpl[interfaceID][obj.typeID]
+		impl, ok := p.interfaceIDToObjectTypeToImpl[interfaceID][obj.fullType]
 		if ok {
 			if impl {
 				checked, err := p.checkObjectCondition(obj)
@@ -236,7 +236,7 @@ func (p *ObjectPool) GetObjectsByInterface(interfaceType reflect.Type) ([]*Objec
 			return nil, fmt.Errorf("object <%s> ref is nil", obj.id)
 		}
 		if !reflect.TypeOf(obj.ref).Implements(interfaceType) {
-			p.interfaceIDToObjectTypeToImpl[interfaceID][obj.typeID] = false
+			p.interfaceIDToObjectTypeToImpl[interfaceID][obj.fullType] = false
 			continue
 		}
 
@@ -248,7 +248,7 @@ func (p *ObjectPool) GetObjectsByInterface(interfaceType reflect.Type) ([]*Objec
 			continue
 		}
 		implObjects = append(implObjects, obj)
-		p.interfaceIDToObjectTypeToImpl[interfaceID][obj.typeID] = true
+		p.interfaceIDToObjectTypeToImpl[interfaceID][obj.fullType] = true
 	}
 
 	return implObjects, nil
@@ -261,22 +261,22 @@ func (p *ObjectPool) checkObjectCondition(obj *Object) (bool, error) {
 	return p.conditionExecutor.Execute(obj.condition)
 }
 
-func generateObjectID(t reflect.Type, alisa string) string {
-	return fmt.Sprintf("%s-%s", generateTypeID(t), alisa)
+func generateObjectID(t reflect.Type, name string) string {
+	return fmt.Sprintf("%s:%s", generateFullType(t), name)
 }
 
-func generateTypeID(t reflect.Type) string {
+func generateFullType(t reflect.Type) string {
 	return fmt.Sprintf("%s.%s", t.PkgPath(), t.Name())
 }
 
-func parseObjectRef(ref any, alisa string) (reflect.Type, string, string, error) {
+func parseObjectRef(ref any, name string) (reflect.Type, string, string, error) {
 	rt := reflect.TypeOf(ref)
 	if rt.Kind() != reflect.Ptr {
 		return nil, "", "", fmt.Errorf("unsupported object ref type <%s>, must be pointer", rt.Kind())
 	}
 	rt = rt.Elem()
-	typeID := fmt.Sprintf("%s.%s", rt.PkgPath(), rt.Name())
-	objectID := typeID + "-" + alisa
+	fullType := generateFullType(rt)
+	objectID := generateObjectID(rt, name)
 
-	return rt, typeID, objectID, nil
+	return rt, fullType, objectID, nil
 }

@@ -54,7 +54,7 @@ func (c *ContainerImpl) Register(ref any, opts ...RegisterOption) error {
 	return nil
 }
 
-func (c *ContainerImpl) GetObject(alisa string, ref any) (any, error) {
+func (c *ContainerImpl) GetObject(name string, ref any) (any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -63,7 +63,7 @@ func (c *ContainerImpl) GetObject(alisa string, ref any) (any, error) {
 		return nil, err
 	}
 
-	_, _, objectID, err := parseObjectRef(ref, alisa)
+	_, _, objectID, err := parseObjectRef(ref, name)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func (c *ContainerImpl) init(object *Object) error {
 			}
 
 			for _, implObject := range implObjects {
-				if implObject.alisa != dependency.Alisa() {
+				if implObject.name != dependency.Name() {
 					continue
 				}
 

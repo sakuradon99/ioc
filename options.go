@@ -4,7 +4,7 @@ import ioc "github.com/sakuradon99/ioc/internal"
 
 func Name(name string) ioc.RegisterOption {
 	return func(o *ioc.RegisterOptions) {
-		o.Alisa = name
+		o.Name = name
 	}
 }
 
