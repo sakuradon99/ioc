@@ -1,3 +1,23 @@
 name: alice
 age: 18
 use_e: true
+array:
+  - xxx
+  - ccc
+stu:
+  name: bob
+  age: 20
+pointer_stu:
+  name: ppp
+  age: 50
+array_stu:
+  - name: aaa
+    age: 19
+  - name: bbb
+    age: 20
+nested_stu:
+  name: vvv
+  age: 30
+  nested_stu:
+    name: nnn
+    age: 40

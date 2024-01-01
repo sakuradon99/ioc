@@ -14,10 +14,10 @@ type ConditionExecutor interface {
 }
 
 type ConditionExecutorImpl struct {
-	sourceManager SourceManager
+	sourceManager PropertyManager
 }
 
-func NewConditionExecutorImpl(sourceManager SourceManager) *ConditionExecutorImpl {
+func NewConditionExecutorImpl(sourceManager PropertyManager) *ConditionExecutorImpl {
 	return &ConditionExecutorImpl{sourceManager: sourceManager}
 }
 
@@ -30,14 +30,14 @@ func (c *ConditionExecutorImpl) Execute(condition string) (bool, error) {
 	parameters := make(map[string]any, len(matches)+1)
 	parameters["nil"] = nil
 	for i, match := range matches {
-		v, _, err := c.sourceManager.GetValue(match[1:])
+		v, _, err := c.sourceManager.GetProperty(match[1:])
 		if err != nil {
 			return false, err
 		}
 
 		p := fmt.Sprintf("p%d", i)
 		parameters[p] = v
-		condition = strings.ReplaceAll(condition, match, p)
+		condition = strings.Replace(condition, match, p, 1)
 	}
 
 	expression, err := govaluate.NewEvaluableExpression(condition)

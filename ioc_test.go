@@ -6,14 +6,29 @@ import (
 	"testing"
 )
 
+type stu struct {
+	name string `property:"name"`
+	age  int    `property:"age"`
+}
+
+type nestedStu struct {
+	stu
+	nestedStu stu `property:"nested_stu"`
+}
+
 type A struct {
-	name    string `value:"name"`
-	age     int    `value:"age"`
-	address string `value:"address;optional"`
+	name       *string   `value:"name"`
+	age        float32   `value:"age"`
+	address    string    `value:"address;optional"`
+	array      []string  `value:"array"`
+	stu        stu       `value:"stu"`
+	pointerStu *stu      `value:"pointer_stu"`
+	arrayStu   []stu     `value:"array_stu"`
+	nestedStu  nestedStu `value:"nested_stu"`
 }
 
 func (a A) Name() string {
-	return a.name
+	return "alice"
 }
 
 type B struct {
@@ -68,7 +83,31 @@ func (b *App) TestA() string {
 }
 
 func Test_IOC(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
+	t.Run("inject value", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+		SetSourceFile("testdata/config.yaml")
+		Register[A]()
+
+		raw, err := GetObject[A]("")
+		a := raw.(*A)
+		assert.NoError(t, err)
+		assert.Equal(t, "alice", *a.name)
+		assert.Equal(t, float32(18), a.age)
+		assert.Equal(t, "", a.address)
+		assert.Equal(t, []string{"xxx", "ccc"}, a.array)
+		assert.Equal(t, "bob", a.stu.name)
+		assert.Equal(t, 20, a.stu.age)
+		assert.Equal(t, "ppp", a.pointerStu.name)
+		assert.Equal(t, 50, a.pointerStu.age)
+		assert.Equal(t, "bbb", a.arrayStu[1].name)
+		assert.Equal(t, 20, a.arrayStu[1].age)
+		assert.Equal(t, "vvv", a.nestedStu.name)
+		assert.Equal(t, 30, a.nestedStu.age)
+		assert.Equal(t, "nnn", a.nestedStu.nestedStu.name)
+		assert.Equal(t, 40, a.nestedStu.nestedStu.age)
+	})
+
+	t.Run("inject object", func(t *testing.T) {
 		iocContainer = ioc.NewContainerImpl()
 		SetSourceFile("testdata/config.yaml")
 		Register[A]()

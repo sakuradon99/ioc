@@ -14,7 +14,7 @@ type Container interface {
 type ContainerImpl struct {
 	objectBuilderFactory *ObjectBuilderFactory
 	objectPool           *ObjectPool
-	sourceManager        SourceManager
+	sourceManager        PropertyManager
 	conditionExecutor    ConditionExecutor
 	mu                   sync.Mutex
 }
@@ -171,16 +171,16 @@ func (c *ContainerImpl) init(object *Object) error {
 		field := it.Field(i)
 		if valueExpr, ok := field.Tag.Lookup("value"); ok {
 			tag := ParseValueTag(valueExpr)
-			value, exist, err := c.sourceManager.GetValue(tag.Value())
+			exist, err := c.sourceManager.AssignProperty(tag.Value(), reflect.ValueOf(instance).Elem().Field(i))
 			if err != nil {
 				return err
 			}
 			if !tag.Optional() && !exist {
 				return fmt.Errorf("value <%s> not found", valueExpr)
 			}
-			if exist {
-				assignPrivateField(reflect.ValueOf(instance).Elem().Field(i), value)
-			}
+			//if exist {
+			//	assignPrivateField(reflect.ValueOf(instance).Elem().Field(i), value)
+			//}
 		}
 	}
 
