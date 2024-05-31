@@ -37,19 +37,19 @@ type PropertyManager interface {
 	AssignProperty(expr string, field reflect.Value) (bool, error)
 }
 
-type SourceManagerImpl struct {
+type propertyManagerImpl struct {
 	loaded      bool
 	propertyMap propertyMap
 }
 
-func NewSourceManagerImpl() *SourceManagerImpl {
-	return &SourceManagerImpl{
+func newPropertyManagerImpl() *propertyManagerImpl {
+	return &propertyManagerImpl{
 		loaded:      false,
 		propertyMap: make(propertyMap),
 	}
 }
 
-func (c *SourceManagerImpl) GetProperty(expr string) (any, bool, error) {
+func (c *propertyManagerImpl) GetProperty(expr string) (any, bool, error) {
 	if !c.loaded {
 		content, err := os.ReadFile(SourceFile)
 		if err != nil {
@@ -74,7 +74,7 @@ func (c *SourceManagerImpl) GetProperty(expr string) (any, bool, error) {
 	return property, true, nil
 }
 
-func (c *SourceManagerImpl) AssignProperty(expr string, field reflect.Value) (bool, error) {
+func (c *propertyManagerImpl) AssignProperty(expr string, field reflect.Value) (bool, error) {
 	property, exist, err := c.GetProperty(expr)
 	if err != nil {
 		return false, err
@@ -83,10 +83,10 @@ func (c *SourceManagerImpl) AssignProperty(expr string, field reflect.Value) (bo
 		return false, nil
 	}
 
-	return c.assignProperty(NewField(field), property)
+	return c.assignProperty(newFieldImpl(field), property)
 }
 
-func (c *SourceManagerImpl) assignProperty(field *Field, property any) (bool, error) {
+func (c *propertyManagerImpl) assignProperty(field Field, property any) (bool, error) {
 	t := field.Type()
 
 	if t.Kind() == reflect.Slice {
@@ -117,7 +117,7 @@ func (c *SourceManagerImpl) assignProperty(field *Field, property any) (bool, er
 	return true, nil
 }
 
-func (c *SourceManagerImpl) convertType(property any, t reflect.Type) (any, error) {
+func (c *propertyManagerImpl) convertType(property any, t reflect.Type) (any, error) {
 	var isPtr bool
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
@@ -133,7 +133,7 @@ func (c *SourceManagerImpl) convertType(property any, t reflect.Type) (any, erro
 		entity := reflect.New(t)
 		for i := 0; i < t.NumField(); i++ {
 			f := t.Field(i)
-			field := NewField(entity.Elem().Field(i))
+			field := newFieldImpl(entity.Elem().Field(i))
 
 			if f.Anonymous {
 				ok, err := c.assignProperty(field, pm)
@@ -179,7 +179,7 @@ func (c *SourceManagerImpl) convertType(property any, t reflect.Type) (any, erro
 	return val, nil
 }
 
-func (c *SourceManagerImpl) convertBasicType(property any, t reflect.Type, isPtr bool) (any, error) {
+func (c *propertyManagerImpl) convertBasicType(property any, t reflect.Type, isPtr bool) (any, error) {
 	switch t.Kind() {
 	case reflect.String:
 		val, err := cast.ToStringE(property)

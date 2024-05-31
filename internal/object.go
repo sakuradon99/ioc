@@ -5,61 +5,120 @@ import (
 	"reflect"
 )
 
-type Object struct {
-	id              string
+type ObjectStatus int
+
+const (
+	ObjectStatusDefault ObjectStatus = iota
+	ObjectStatusInitializing
+	ObjectStatusInitialized
+)
+
+type Object interface {
+	ObjectRef
+	Name() string
+	Condition() string
+	Dependencies() []Dependency
+	Instance() any
+	Status() ObjectStatus
+	StartInitialization()
+	Build(args []any) (any, error)
+	Optional() bool
+}
+
+type objectImpl struct {
+	ObjectRef
 	name            string
-	fullType        string
 	dependencies    []Dependency
 	instanceBuilder InstanceBuilder
-	ref             any
+	optional        bool
+	condition       string
 	instance        any
 	inited          bool
 	initializing    bool
-	optional        bool
-	condition       string
 }
 
-func NewObject(
-	id string,
+func newObject(
+	of ObjectRef,
 	name string,
-	fullType string,
 	condition string,
 	optional bool,
 	dependencies []Dependency,
 	instanceBuilder InstanceBuilder,
-	ref any,
-) *Object {
-	return &Object{
-		id:              id,
+) *objectImpl {
+	return &objectImpl{
+		ObjectRef:       of,
 		name:            name,
-		fullType:        fullType,
 		condition:       condition,
 		optional:        optional,
 		dependencies:    dependencies,
 		instanceBuilder: instanceBuilder,
-		ref:             ref,
 	}
 }
 
+func (o *objectImpl) Name() string {
+	return o.name
+}
+
+func (o *objectImpl) Optional() bool {
+	return o.optional
+}
+
+func (o *objectImpl) Condition() string {
+	return o.condition
+}
+
+func (o *objectImpl) Dependencies() []Dependency {
+	return o.dependencies
+}
+
+func (o *objectImpl) Instance() any {
+	return o.instance
+}
+
+func (o *objectImpl) Status() ObjectStatus {
+	if o.inited {
+		return ObjectStatusInitialized
+	}
+	if o.initializing {
+		return ObjectStatusInitializing
+	}
+	return ObjectStatusDefault
+}
+
+func (o *objectImpl) StartInitialization() {
+	o.initializing = true
+}
+
+func (o *objectImpl) Build(args []any) (any, error) {
+	instance, err := o.instanceBuilder.Build(args)
+	if err != nil {
+		return nil, err
+	}
+	o.instance = instance
+	o.inited = true
+	return instance, nil
+}
+
 type ObjectBuilder interface {
-	Build(ref any, options RegisterOptions) (*Object, error)
+	Build(ref any, options RegisterOptions) (Object, error)
 }
 
-type FieldsObjectBuilder struct {
+type fieldsObjectBuilder struct {
 }
 
-func NewFieldsObjectBuilder() *FieldsObjectBuilder {
-	return &FieldsObjectBuilder{}
+func newFieldsObjectBuilder() *fieldsObjectBuilder {
+	return &fieldsObjectBuilder{}
 }
 
-func (f *FieldsObjectBuilder) Build(ref any, options RegisterOptions) (*Object, error) {
-	ot, typeID, objectID, err := parseObjectRef(ref, options.Name)
+func (f *fieldsObjectBuilder) Build(ref any, options RegisterOptions) (Object, error) {
+	of, err := parseObjectRef(ref, options.Name)
 	if err != nil {
 		return nil, err
 	}
 
 	var injectFieldIndexes []int
 	var dependencies []Dependency
+	ot := of.Type()
 	for i := 0; i < ot.NumField(); i++ {
 		field := ot.Field(i)
 		if injectTagExpr, ok := field.Tag.Lookup("inject"); ok {
@@ -75,33 +134,31 @@ func (f *FieldsObjectBuilder) Build(ref any, options RegisterOptions) (*Object, 
 				)
 			}
 
-			dependencies = append(dependencies, NewDependencyImpl(injectTag.Value(), injectTag.Optional(), ft))
+			dependencies = append(dependencies, newDependencyImpl(injectTag.Value(), injectTag.Optional(), ft))
 		}
 	}
-	obj := NewObject(
-		objectID,
+	obj := newObject(
+		of,
 		options.Name,
-		typeID,
 		options.ConditionExpr,
 		options.Optional,
 		dependencies,
-		NewFieldInstanceBuilder(ot, injectFieldIndexes),
-		ref,
+		newFieldInstanceBuilder(of.Type(), injectFieldIndexes),
 	)
 
 	return obj, nil
 }
 
-type ConstructorObjectBuilder struct {
+type constructorObjectBuilder struct {
 	constructor any
 }
 
-func NewConstructorObjectBuilder() *ConstructorObjectBuilder {
-	return &ConstructorObjectBuilder{}
+func newConstructorObjectBuilder() *constructorObjectBuilder {
+	return &constructorObjectBuilder{}
 }
 
-func (c *ConstructorObjectBuilder) Build(ref any, options RegisterOptions) (*Object, error) {
-	_, typeID, objectID, err := parseObjectRef(ref, options.Name)
+func (c *constructorObjectBuilder) Build(ref any, options RegisterOptions) (Object, error) {
+	of, err := parseObjectRef(ref, options.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -127,72 +184,81 @@ func (c *ConstructorObjectBuilder) Build(ref any, options RegisterOptions) (*Obj
 			)
 		}
 
-		dependencies = append(dependencies, NewDependencyImpl("", false, pt))
+		dependencies = append(dependencies, newDependencyImpl("", false, pt))
 	}
-	obj := NewObject(
-		objectID,
+	obj := newObject(
+		of,
 		options.Name,
-		typeID,
 		options.ConditionExpr,
 		options.Optional,
 		dependencies,
-		NewConstructorInstanceBuilder(options.Constructor),
-		ref,
+		newConstructorInstanceBuilder(options.Constructor),
 	)
 
 	return obj, nil
 }
 
-type ObjectBuilderFactory struct {
-	fieldsObjectBuilder      *FieldsObjectBuilder
-	constructorObjectBuilder *ConstructorObjectBuilder
+type ObjectBuilderFactory interface {
+	GetBuilder(options RegisterOptions) ObjectBuilder
 }
 
-func NewObjectBuilderFactory() *ObjectBuilderFactory {
-	return &ObjectBuilderFactory{
-		fieldsObjectBuilder:      NewFieldsObjectBuilder(),
-		constructorObjectBuilder: NewConstructorObjectBuilder(),
+type objectBuilderFactoryImpl struct {
+	fieldsObjectBuilder      *fieldsObjectBuilder
+	constructorObjectBuilder *constructorObjectBuilder
+}
+
+func newObjectBuilderFactoryImpl() *objectBuilderFactoryImpl {
+	return &objectBuilderFactoryImpl{
+		fieldsObjectBuilder:      newFieldsObjectBuilder(),
+		constructorObjectBuilder: newConstructorObjectBuilder(),
 	}
 }
 
-func (f *ObjectBuilderFactory) GetBuilder(options RegisterOptions) ObjectBuilder {
+func (f *objectBuilderFactoryImpl) GetBuilder(options RegisterOptions) ObjectBuilder {
 	if options.Constructor != nil {
 		return f.constructorObjectBuilder
 	}
 	return f.fieldsObjectBuilder
 }
 
-type ObjectPool struct {
-	idToObject                    map[string]*Object
+type ObjectPool interface {
+	Add(object Object) error
+	List() []Object
+	Get(id string) (Object, error)
+	GetObjectsByInterface(interfaceType reflect.Type) ([]Object, error)
+}
+
+type objectPoolImpl struct {
+	idToObject                    map[string]Object
 	interfaceIDToObjectTypeToImpl map[string]map[string]bool
 	conditionExecutor             ConditionExecutor
 }
 
-func NewObjectPool(conditionExecutor ConditionExecutor) *ObjectPool {
-	return &ObjectPool{
-		idToObject:                    make(map[string]*Object),
+func newObjectPoolImpl(conditionExecutor ConditionExecutor) *objectPoolImpl {
+	return &objectPoolImpl{
+		idToObject:                    make(map[string]Object),
 		interfaceIDToObjectTypeToImpl: make(map[string]map[string]bool),
 		conditionExecutor:             conditionExecutor,
 	}
 }
 
-func (p *ObjectPool) Add(object *Object) error {
-	if _, ok := p.idToObject[object.id]; ok {
-		return fmt.Errorf("object with id %s already exists", object.id)
+func (p *objectPoolImpl) Add(object Object) error {
+	if _, ok := p.idToObject[object.ObjectID()]; ok {
+		return fmt.Errorf("object with id %s already exists", object.ObjectID())
 	}
-	p.idToObject[object.id] = object
+	p.idToObject[object.ObjectID()] = object
 	return nil
 }
 
-func (p *ObjectPool) List() []*Object {
-	var objects []*Object
+func (p *objectPoolImpl) List() []Object {
+	var objects []Object
 	for _, obj := range p.idToObject {
 		objects = append(objects, obj)
 	}
 	return objects
 }
 
-func (p *ObjectPool) Get(id string) (*Object, error) {
+func (p *objectPoolImpl) Get(id string) (Object, error) {
 	obj, ok := p.idToObject[id]
 	if !ok {
 		return nil, nil
@@ -206,7 +272,7 @@ func (p *ObjectPool) Get(id string) (*Object, error) {
 	return obj, nil
 }
 
-func (p *ObjectPool) GetObjectsByInterface(interfaceType reflect.Type) ([]*Object, error) {
+func (p *objectPoolImpl) GetObjectsByInterface(interfaceType reflect.Type) ([]Object, error) {
 	if interfaceType.Kind() != reflect.Interface {
 		return nil, fmt.Errorf("unsupported interface type <%s>", interfaceType.Kind())
 	}
@@ -216,9 +282,9 @@ func (p *ObjectPool) GetObjectsByInterface(interfaceType reflect.Type) ([]*Objec
 		p.interfaceIDToObjectTypeToImpl[interfaceID] = make(map[string]bool)
 	}
 
-	var implObjects []*Object
+	var implObjects []Object
 	for _, obj := range p.idToObject {
-		impl, ok := p.interfaceIDToObjectTypeToImpl[interfaceID][obj.fullType]
+		impl, ok := p.interfaceIDToObjectTypeToImpl[interfaceID][obj.TypeName()]
 		if ok {
 			if impl {
 				checked, err := p.checkObjectCondition(obj)
@@ -232,11 +298,11 @@ func (p *ObjectPool) GetObjectsByInterface(interfaceType reflect.Type) ([]*Objec
 			continue
 		}
 
-		if obj.ref == nil {
-			return nil, fmt.Errorf("object <%s> ref is nil", obj.id)
+		if obj.Ref() == nil {
+			return nil, fmt.Errorf("object <%s> ref is nil", obj.ObjectID())
 		}
-		if !reflect.TypeOf(obj.ref).Implements(interfaceType) {
-			p.interfaceIDToObjectTypeToImpl[interfaceID][obj.fullType] = false
+		if !reflect.TypeOf(obj.Ref()).Implements(interfaceType) {
+			p.interfaceIDToObjectTypeToImpl[interfaceID][obj.TypeName()] = false
 			continue
 		}
 
@@ -248,17 +314,63 @@ func (p *ObjectPool) GetObjectsByInterface(interfaceType reflect.Type) ([]*Objec
 			continue
 		}
 		implObjects = append(implObjects, obj)
-		p.interfaceIDToObjectTypeToImpl[interfaceID][obj.fullType] = true
+		p.interfaceIDToObjectTypeToImpl[interfaceID][obj.TypeName()] = true
 	}
 
 	return implObjects, nil
 }
 
-func (p *ObjectPool) checkObjectCondition(obj *Object) (bool, error) {
-	if obj.condition == "" {
+func (p *objectPoolImpl) checkObjectCondition(obj Object) (bool, error) {
+	if obj.Condition() == "" {
 		return true, nil
 	}
-	return p.conditionExecutor.Execute(obj.condition)
+	return p.conditionExecutor.Execute(obj.Condition())
+}
+
+type ObjectRef interface {
+	Ref() any
+	Type() reflect.Type
+	TypeName() string
+	ObjectID() string
+}
+
+type objectRefImpl struct {
+	ref      any
+	t        reflect.Type
+	fullType string
+	objectID string
+}
+
+func newObjectRef(ref any, t reflect.Type, fullType string, objectID string) *objectRefImpl {
+	return &objectRefImpl{ref: ref, t: t, fullType: fullType, objectID: objectID}
+}
+
+func (o *objectRefImpl) Ref() any {
+	return o.ref
+}
+
+func (o *objectRefImpl) Type() reflect.Type {
+	return o.t
+}
+
+func (o *objectRefImpl) TypeName() string {
+	return o.fullType
+}
+
+func (o *objectRefImpl) ObjectID() string {
+	return o.objectID
+}
+
+func parseObjectRef(ref any, name string) (ObjectRef, error) {
+	rt := reflect.TypeOf(ref)
+	if rt.Kind() != reflect.Ptr {
+		return nil, fmt.Errorf("unsupported object ref type <%s>, must be pointer", rt.Kind())
+	}
+	rt = rt.Elem()
+	fullType := generateFullType(rt)
+	objectID := generateObjectID(rt, name)
+
+	return newObjectRef(ref, rt, fullType, objectID), nil
 }
 
 func generateObjectID(t reflect.Type, name string) string {
@@ -267,16 +379,4 @@ func generateObjectID(t reflect.Type, name string) string {
 
 func generateFullType(t reflect.Type) string {
 	return fmt.Sprintf("%s.%s", t.PkgPath(), t.Name())
-}
-
-func parseObjectRef(ref any, name string) (reflect.Type, string, string, error) {
-	rt := reflect.TypeOf(ref)
-	if rt.Kind() != reflect.Ptr {
-		return nil, "", "", fmt.Errorf("unsupported object ref type <%s>, must be pointer", rt.Kind())
-	}
-	rt = rt.Elem()
-	fullType := generateFullType(rt)
-	objectID := generateObjectID(rt, name)
-
-	return rt, fullType, objectID, nil
 }

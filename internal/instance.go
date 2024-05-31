@@ -9,15 +9,15 @@ type InstanceBuilder interface {
 	Build(args []any) (any, error)
 }
 
-type ConstructorInstanceBuilder struct {
+type constructorInstanceBuilder struct {
 	constructor any
 }
 
-func NewConstructorInstanceBuilder(constructor any) *ConstructorInstanceBuilder {
-	return &ConstructorInstanceBuilder{constructor: constructor}
+func newConstructorInstanceBuilder(constructor any) *constructorInstanceBuilder {
+	return &constructorInstanceBuilder{constructor: constructor}
 }
 
-func (b *ConstructorInstanceBuilder) Build(args []any) (any, error) {
+func (b *constructorInstanceBuilder) Build(args []any) (any, error) {
 	ot := reflect.TypeOf(b.constructor)
 	ov := reflect.ValueOf(b.constructor)
 
@@ -38,19 +38,19 @@ func (b *ConstructorInstanceBuilder) Build(args []any) (any, error) {
 	return outcomes[0].Interface(), nil
 }
 
-type FieldInstanceBuilder struct {
+type fieldInstanceBuilder struct {
 	ot                 reflect.Type
 	injectFieldIndexes []int
 }
 
-func NewFieldInstanceBuilder(ot reflect.Type, injectFieldIndexes []int) *FieldInstanceBuilder {
-	return &FieldInstanceBuilder{ot: ot, injectFieldIndexes: injectFieldIndexes}
+func newFieldInstanceBuilder(ot reflect.Type, injectFieldIndexes []int) *fieldInstanceBuilder {
+	return &fieldInstanceBuilder{ot: ot, injectFieldIndexes: injectFieldIndexes}
 }
 
-func (b *FieldInstanceBuilder) Build(args []any) (any, error) {
+func (b *fieldInstanceBuilder) Build(args []any) (any, error) {
 	ov := reflect.New(b.ot)
 	for index, arg := range args {
-		field := NewField(ov.Elem().Field(b.injectFieldIndexes[index]))
+		field := newFieldImpl(ov.Elem().Field(b.injectFieldIndexes[index]))
 		field.Assign(arg)
 	}
 	return ov.Interface(), nil

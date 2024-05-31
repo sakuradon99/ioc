@@ -13,15 +13,15 @@ type ConditionExecutor interface {
 	Execute(condition string) (bool, error)
 }
 
-type ConditionExecutorImpl struct {
+type conditionExecutorImpl struct {
 	sourceManager PropertyManager
 }
 
-func NewConditionExecutorImpl(sourceManager PropertyManager) *ConditionExecutorImpl {
-	return &ConditionExecutorImpl{sourceManager: sourceManager}
+func newConditionExecutorImpl(sourceManager PropertyManager) *conditionExecutorImpl {
+	return &conditionExecutorImpl{sourceManager: sourceManager}
 }
 
-func (c *ConditionExecutorImpl) Execute(condition string) (bool, error) {
+func (c *conditionExecutorImpl) Execute(condition string) (bool, error) {
 	if condition == "" {
 		return true, nil
 	}

@@ -88,8 +88,7 @@ func Test_IOC(t *testing.T) {
 		SetSourceFile("testdata/config.yaml")
 		Register[A]()
 
-		raw, err := GetObject[A]("")
-		a := raw.(*A)
+		a, err := GetObject[A]("")
 		assert.NoError(t, err)
 		assert.Equal(t, "alice", *a.name)
 		assert.Equal(t, float32(18), a.age)
@@ -117,20 +116,25 @@ func Test_IOC(t *testing.T) {
 		Register[F](Conditional("#use_e != true"))
 		Register[App]()
 
-		obj, err := GetObject[App]("")
+		app, err := GetObject[App]("")
 		if err != nil {
 			panic(err)
 		}
 		assert.NoError(t, err)
-
-		app, ok := obj.(*App)
-		assert.Equal(t, true, ok)
 
 		assert.Equal(t, "alice", app.TestA())
 		assert.Equal(t, true, app.b == nil)
 		assert.Equal(t, "c", app.ic.Echo1())
 		assert.Equal(t, "d", app.id.Echo1())
 		assert.Equal(t, "e", app.i2.Echo2())
+
+		ic, err := GetInterface[I1]("c")
+		assert.NoError(t, err)
+		assert.Equal(t, "c", ic.Echo1())
+
+		id, err := GetInterface[I1]("d")
+		assert.NoError(t, err)
+		assert.Equal(t, "d", id.Echo1())
 	})
 
 	t.Run("wrong source file", func(t *testing.T) {
