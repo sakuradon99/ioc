@@ -25,9 +25,22 @@ type A struct {
 	pointerStu *stu      `value:"pointer_stu"`
 	arrayStu   []stu     `value:"array_stu"`
 	nestedStu  nestedStu `value:"nested_stu"`
+	beforeName string
+	afterName  string
 }
 
-func (a A) Name() string {
+func (a *A) BeforePropertyAssignation() error {
+	a.beforeName = "beforealice"
+	return nil
+
+}
+
+func (a *A) AfterPropertyAssignation() error {
+	a.afterName = "after" + *a.name
+	return nil
+}
+
+func (a *A) Name() string {
 	return "alice"
 }
 
@@ -104,6 +117,8 @@ func Test_IOC(t *testing.T) {
 		assert.Equal(t, 30, a.nestedStu.age)
 		assert.Equal(t, "nnn", a.nestedStu.nestedStu.name)
 		assert.Equal(t, 40, a.nestedStu.nestedStu.age)
+		assert.Equal(t, "beforealice", a.beforeName)
+		assert.Equal(t, "afteralice", a.afterName)
 	})
 
 	t.Run("inject object", func(t *testing.T) {

@@ -189,6 +189,35 @@ func (c *ContainerImpl) init(object Object) error {
 		return err
 	}
 
+	err = c.processBeforePropertyAssignation(instance)
+	if err != nil {
+		return err
+	}
+
+	err = c.processPropertyAssignation(instance)
+	if err != nil {
+		return err
+	}
+
+	err = c.processAfterPropertyAssignation(instance)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *ContainerImpl) processBeforePropertyAssignation(instance any) error {
+	if reflect.TypeOf(instance).Implements(reflect.TypeOf((*ObjectBeforePropertyAssignation)(nil)).Elem()) {
+		err := instance.(ObjectBeforePropertyAssignation).BeforePropertyAssignation()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *ContainerImpl) processPropertyAssignation(instance any) error {
 	it := reflect.TypeOf(instance).Elem()
 	for i := 0; i < it.NumField(); i++ {
 		field := it.Field(i)
@@ -203,6 +232,15 @@ func (c *ContainerImpl) init(object Object) error {
 			}
 		}
 	}
+	return nil
+}
 
+func (c *ContainerImpl) processAfterPropertyAssignation(instance any) error {
+	if reflect.TypeOf(instance).Implements(reflect.TypeOf((*ObjectAfterPropertyAssignation)(nil)).Elem()) {
+		err := instance.(ObjectAfterPropertyAssignation).AfterPropertyAssignation()
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }

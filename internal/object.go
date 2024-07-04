@@ -380,3 +380,11 @@ func generateObjectID(t reflect.Type, name string) string {
 func generateFullType(t reflect.Type) string {
 	return fmt.Sprintf("%s.%s", t.PkgPath(), t.Name())
 }
+
+type ObjectBeforePropertyAssignation interface {
+	BeforePropertyAssignation() error
+}
+
+type ObjectAfterPropertyAssignation interface {
+	AfterPropertyAssignation() error
+}
