@@ -24,12 +24,12 @@ func (m propertyMap) GetProperty(keys []string) any {
 		return value
 	}
 
-	next, ok := value.(map[string]any)
+	next, ok := value.(propertyMap)
 	if !ok {
 		return nil
 	}
 
-	return propertyMap(next).GetProperty(keys[1:])
+	return next.GetProperty(keys[1:])
 }
 
 type PropertyManager interface {
