@@ -6,80 +6,122 @@ import (
 	"testing"
 )
 
-type stu struct {
-	name string `property:"name"`
-	age  int    `property:"age"`
+type propertyStu struct {
+	str       string    `property:"str"`
+	strPtr    *string   `property:"str_ptr"`
+	strOpt    *string   `property:"str_opt;optional"`
+	int       int       `property:"int"`
+	float     float32   `property:"float"`
+	bool      bool      `property:"bool"`
+	strArr    []string  `property:"string_arr"`
+	strPtrArr []*string `property:"string_ptr_arr"`
 }
 
 type nestedStu struct {
-	stu
-	nestedStu stu `property:"nested_stu"`
+	propertyStu
+	str2 string `property:"str_2"`
 }
 
 type A struct {
-	name       *string   `value:"name"`
-	age        float32   `value:"age"`
-	address    string    `value:"address;optional"`
-	array      []string  `value:"array"`
-	stu        stu       `value:"stu"`
-	pointerStu *stu      `value:"pointer_stu"`
-	arrayStu   []stu     `value:"array_stu"`
-	nestedStu  nestedStu `value:"nested_stu"`
-}
-
-func (a A) Name() string {
-	return "alice"
+	str         string      `value:"str"`
+	strPtr      *string     `value:"str_ptr"`
+	strOpt      *string     `value:"str_opt;optional"`
+	int         int         `value:"int"`
+	float       float32     `value:"float"`
+	bool        bool        `value:"bool"`
+	strArr      []string    `value:"string_arr"`
+	strPtrArr   []*string   `value:"string_ptr_arr"`
+	nextStr     string      `value:"next.str"`
+	nextInt     int         `value:"next.int"`
+	propertyStu propertyStu `value:"property_stu"`
+	nestedStu   nestedStu   `value:"nested_stu"`
 }
 
 type B struct {
-}
-
-type I1 interface {
-	Echo1() string
+	a *A `inject:""`
 }
 
 type C struct {
-}
-
-func (c *C) Echo1() string {
-	return "c"
+	A
 }
 
 type D struct {
-}
-
-func (d *D) Echo1() string {
-	return "d"
-}
-
-type I2 interface {
-	Echo2() string
+	c *C `inject:""`
 }
 
 type E struct {
-}
-
-func (e *E) Echo2() string {
-	return "e"
+	a *A `inject:""`
 }
 
 type F struct {
+	b *B `inject:""`
+	D
+	params struct {
+		e *E `inject:""`
+	}
 }
 
-func (f *F) Echo2() string {
-	return "f"
+type I interface {
+	Test() string
 }
 
-type App struct {
-	a  *A `inject:""`
-	b  *B `inject:";optional"`
-	ic I1 `inject:"c"`
-	id I1 `inject:"d"`
-	i2 I2 `inject:""`
+type Impl struct {
 }
 
-func (b *App) TestA() string {
-	return b.a.Name()
+func (i *Impl) Test() string {
+	return "test"
+}
+
+type IMulti interface {
+	TestMulti() string
+}
+
+type ImplMulti1 struct {
+}
+
+func (i *ImplMulti1) TestMulti() string {
+	return "test1"
+}
+
+type ImplMulti2 struct {
+}
+
+func (i *ImplMulti2) TestMulti() string {
+	return "test2"
+}
+
+type G struct {
+	a      *A
+	i      I      `inject:""`
+	multi1 IMulti `inject:"multi1"`
+	multi2 IMulti `inject:"multi2"`
+
+	str        string
+	defaultStr string
+}
+
+func NewG(a *A, i I, params struct {
+	multi1     IMulti `inject:"multi1"`
+	multi2     IMulti `inject:"multi2"`
+	defaultStr string
+	str        string `value:"str"`
+}) *G {
+	return &G{
+		a:          a,
+		i:          i,
+		multi1:     params.multi1,
+		multi2:     params.multi2,
+		str:        params.str,
+		defaultStr: params.defaultStr,
+	}
+}
+
+type H struct {
+	i IMulti `inject:""`
+}
+
+type J struct {
+	interfaceList []IMulti `inject:""`
 }
 
 func Test_IOC(t *testing.T) {
@@ -89,60 +131,129 @@ func Test_IOC(t *testing.T) {
 		Register[A]()
 
 		a, err := GetObject[A]("")
-		assert.NoError(t, err)
-		assert.Equal(t, "alice", *a.name)
-		assert.Equal(t, float32(18), a.age)
-		assert.Equal(t, "", a.address)
-		assert.Equal(t, []string{"xxx", "ccc"}, a.array)
-		assert.Equal(t, "bob", a.stu.name)
-		assert.Equal(t, 20, a.stu.age)
-		assert.Equal(t, "ppp", a.pointerStu.name)
-		assert.Equal(t, 50, a.pointerStu.age)
-		assert.Equal(t, "bbb", a.arrayStu[1].name)
-		assert.Equal(t, 20, a.arrayStu[1].age)
-		assert.Equal(t, "vvv", a.nestedStu.name)
-		assert.Equal(t, 30, a.nestedStu.age)
-		assert.Equal(t, "nnn", a.nestedStu.nestedStu.name)
-		assert.Equal(t, 40, a.nestedStu.nestedStu.age)
+		assert.Nil(t, err)
+		assert.NotNil(t, a)
+		assert.Equal(t, "str", a.str)
+		assert.Equal(t, "str_ptr", *a.strPtr)
+		assert.Nil(t, a.strOpt)
+		assert.Equal(t, 1, a.int)
+		assert.Equal(t, float32(0.99), a.float)
+		assert.True(t, a.bool)
+		assert.Equal(t, []string{"str_1", "str_2"}, a.strArr)
+		assert.Equal(t, 2, len(a.strPtrArr))
+		assert.Equal(t, "str_ptr_1", *a.strPtrArr[0])
+		assert.Equal(t, "str_ptr_2", *a.strPtrArr[1])
+		assert.Equal(t, "next_str", a.nextStr)
+		assert.Equal(t, 2, a.nextInt)
+
+		assert.Equal(t, "str", a.propertyStu.str)
+		assert.Equal(t, "str_ptr", *a.propertyStu.strPtr)
+		assert.Nil(t, a.propertyStu.strOpt)
+		assert.Equal(t, 1, a.propertyStu.int)
+		assert.Equal(t, float32(0.99), a.propertyStu.float)
+		assert.True(t, a.propertyStu.bool)
+		assert.Equal(t, []string{"str_1", "str_2"}, a.propertyStu.strArr)
+		assert.Equal(t, 2, len(a.propertyStu.strPtrArr))
+		assert.Equal(t, "str_ptr_1", *a.propertyStu.strPtrArr[0])
+		assert.Equal(t, "str_ptr_2", *a.propertyStu.strPtrArr[1])
+
+		assert.Equal(t, "str", a.nestedStu.str)
+		assert.Equal(t, "str_ptr", *a.nestedStu.strPtr)
+		assert.Nil(t, a.nestedStu.strOpt)
+		assert.Equal(t, 1, a.nestedStu.int)
+		assert.Equal(t, float32(0.99), a.nestedStu.float)
+		assert.True(t, a.nestedStu.bool)
+		assert.Equal(t, []string{"str_1", "str_2"}, a.nestedStu.strArr)
+		assert.Equal(t, 2, len(a.nestedStu.strPtrArr))
+		assert.Equal(t, "str_ptr_1", *a.nestedStu.strPtrArr[0])
+		assert.Equal(t, "str_ptr_2", *a.nestedStu.strPtrArr[1])
+		assert.Equal(t, "str_2", a.nestedStu.str2)
 	})
 
 	t.Run("inject object", func(t *testing.T) {
 		iocContainer = ioc.NewContainerImpl()
 		SetSourceFile("testdata/config.yaml")
 		Register[A]()
-		Register[C](Name("c"))
-		Register[D](Name("d"))
-		Register[E](Conditional("#use_e == true"))
-		Register[F](Conditional("#use_e != true"))
-		Register[App]()
+		Register[B]()
+		Register[C]()
+		Register[D]()
+		Register[E]()
+		Register[F]()
 
-		app, err := GetObject[App]("")
-		if err != nil {
-			panic(err)
-		}
-		assert.NoError(t, err)
+		f, err := GetObject[F]("")
+		assert.Nil(t, err)
+		assert.NotNil(t, f)
 
-		assert.Equal(t, "alice", app.TestA())
-		assert.Equal(t, true, app.b == nil)
-		assert.Equal(t, "c", app.ic.Echo1())
-		assert.Equal(t, "d", app.id.Echo1())
-		assert.Equal(t, "e", app.i2.Echo2())
-
-		ic, err := GetInterface[I1]("c")
-		assert.NoError(t, err)
-		assert.Equal(t, "c", ic.Echo1())
-
-		id, err := GetInterface[I1]("d")
-		assert.NoError(t, err)
-		assert.Equal(t, "d", id.Echo1())
+		assert.Equal(t, "str", f.b.a.str)
+		assert.Equal(t, "str", f.c.str)
+		assert.Equal(t, "str", f.params.e.a.str)
 	})
 
-	t.Run("wrong source file", func(t *testing.T) {
+	t.Run("inject interface", func(t *testing.T) {
 		iocContainer = ioc.NewContainerImpl()
-		SetSourceFile("testdata/config1.yaml")
-		Register[A]()
+		Register[Impl]()
+		Register[ImplMulti1](Name("multi1"))
+		Register[ImplMulti2](Name("multi2"))
+		Register[G]()
 
-		_, err := GetObject[A]("")
-		assert.Error(t, err)
+		g, err := GetObject[G]("")
+		assert.Nil(t, err)
+		assert.NotNil(t, g)
+
+		assert.Equal(t, "test", g.i.Test())
+		assert.Equal(t, "test1", g.multi1.TestMulti())
+		assert.Equal(t, "test2", g.multi2.TestMulti())
+	})
+
+	t.Run("inject with constructor", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+		SetSourceFile("testdata/config.yaml")
+		Register[A]()
+		Register[B]()
+		Register[Impl]()
+		Register[ImplMulti1](Name("multi1"))
+		Register[ImplMulti2](Name("multi2"))
+		Register[G](Constructor(NewG))
+
+		g, err := GetObject[G]("")
+		assert.Nil(t, err)
+		assert.NotNil(t, g)
+
+		assert.Equal(t, "str", g.a.str)
+		assert.Equal(t, "test", g.i.Test())
+		assert.Equal(t, "test1", g.multi1.TestMulti())
+		assert.Equal(t, "test2", g.multi2.TestMulti())
+		assert.Equal(t, "str", g.str)
+		assert.Equal(t, "", g.defaultStr)
+	})
+
+	t.Run("inject with condition", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+		SetSourceFile("testdata/config.yaml")
+		Register[ImplMulti1](Conditional("#condition.use_impl_multi == 1"))
+		Register[ImplMulti2](Conditional("#condition.use_impl_multi == 2"))
+		Register[H]()
+
+		h, err := GetObject[H]("")
+		assert.Nil(t, err)
+		assert.NotNil(t, h)
+
+		assert.Equal(t, "test2", h.i.TestMulti())
+	})
+
+	t.Run("inject list of interface", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+		Register[ImplMulti1]()
+		Register[ImplMulti2]()
+		Register[J]()
+
+		j, err := GetObject[J]("")
+		assert.Nil(t, err)
+		assert.NotNil(t, j)
+
+		assert.Equal(t, 2, len(j.interfaceList))
+		arr := []string{j.interfaceList[0].TestMulti(), j.interfaceList[1].TestMulti()}
+		assert.Contains(t, arr, "test1")
+		assert.Contains(t, arr, "test2")
 	})
 }

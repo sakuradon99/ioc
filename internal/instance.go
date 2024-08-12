@@ -9,49 +9,83 @@ type InstanceBuilder interface {
 	Build(args []any) (any, error)
 }
 
-type constructorInstanceBuilder struct {
-	constructor any
-}
-
-func newConstructorInstanceBuilder(constructor any) *constructorInstanceBuilder {
-	return &constructorInstanceBuilder{constructor: constructor}
-}
-
-func (b *constructorInstanceBuilder) Build(args []any) (any, error) {
-	ot := reflect.TypeOf(b.constructor)
-	ov := reflect.ValueOf(b.constructor)
-
-	if ot.Kind() != reflect.Func {
-		return nil, fmt.Errorf("unsupported constructor type %s", ot.Kind())
-	}
-
-	incomes := make([]reflect.Value, ot.NumIn())
-	for i, arg := range args {
-		incomes[i] = reflect.ValueOf(arg)
-	}
-
-	outcomes := ov.Call(incomes)
-	if len(outcomes) == 2 && !outcomes[1].IsNil() {
-		return nil, outcomes[1].Interface().(error)
-	}
-
-	return outcomes[0].Interface(), nil
-}
-
 type fieldInstanceBuilder struct {
 	ot                 reflect.Type
-	injectFieldIndexes []int
+	injectFieldIndexes [][]int
 }
 
-func newFieldInstanceBuilder(ot reflect.Type, injectFieldIndexes []int) *fieldInstanceBuilder {
+func newFieldInstanceBuilder(ot reflect.Type, injectFieldIndexes [][]int) *fieldInstanceBuilder {
 	return &fieldInstanceBuilder{ot: ot, injectFieldIndexes: injectFieldIndexes}
 }
 
 func (b *fieldInstanceBuilder) Build(args []any) (any, error) {
 	ov := reflect.New(b.ot)
+	oe := ov.Elem()
+
+	var fn func(fv reflect.Value, arg any, fIndex []int)
+	fn = func(fv reflect.Value, arg any, fIndex []int) {
+		if len(fIndex) == 0 {
+			f := newStructField(fv)
+			f.Assign(arg)
+		} else {
+			fn(fv.Field(fIndex[0]), arg, fIndex[1:])
+		}
+	}
+
 	for index, arg := range args {
-		field := newFieldImpl(ov.Elem().Field(b.injectFieldIndexes[index]))
-		field.Assign(arg)
+		fn(oe, arg, b.injectFieldIndexes[index])
 	}
 	return ov.Interface(), nil
+}
+
+type constructorInstanceBuilder struct {
+	constructor      any
+	injectArgIndexes [][]int
+}
+
+func newConstructorInstanceBuilder(constructor any, injectArgIndexes [][]int) *constructorInstanceBuilder {
+	return &constructorInstanceBuilder{constructor: constructor, injectArgIndexes: injectArgIndexes}
+}
+
+func (b *constructorInstanceBuilder) Build(args []any) (any, error) {
+	ct := reflect.TypeOf(b.constructor)
+	cv := reflect.ValueOf(b.constructor)
+
+	if ct.Kind() != reflect.Func {
+		return nil, fmt.Errorf("unsupported constructor type %s", ct.Kind())
+	}
+
+	var fn func(fv reflect.Value, arg any, fIndex []int)
+	fn = func(fv reflect.Value, arg any, fIndex []int) {
+		if len(fIndex) == 0 {
+			f := newStructField(fv)
+			f.Assign(arg)
+		} else {
+			fn(fv.Field(fIndex[0]), arg, fIndex[1:])
+		}
+	}
+
+	incomes := make([]reflect.Value, ct.NumIn())
+	for i := range incomes {
+		incomes[i] = reflect.New(ct.In(i)).Elem()
+	}
+	for i, arg := range args {
+		indexes := b.injectArgIndexes[i]
+		if len(indexes) == 0 {
+			return nil, fmt.Errorf("invalid inject arg indexes")
+		}
+		index := indexes[0]
+		if len(indexes) == 1 {
+			incomes[index].Set(reflect.ValueOf(arg))
+			continue
+		}
+		fn(incomes[index], arg, indexes[1:])
+	}
+
+	outcomes := cv.Call(incomes)
+	if len(outcomes) == 2 && !outcomes[1].IsNil() {
+		return nil, outcomes[1].Interface().(error)
+	}
+
+	return outcomes[0].Interface(), nil
 }

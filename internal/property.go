@@ -24,7 +24,7 @@ func (m propertyMap) GetProperty(keys []string) any {
 		return value
 	}
 
-	next, ok := value.(map[string]any)
+	next, ok := value.(propertyMap)
 	if !ok {
 		return nil
 	}
@@ -34,7 +34,7 @@ func (m propertyMap) GetProperty(keys []string) any {
 
 type PropertyManager interface {
 	GetProperty(expr string) (any, bool, error)
-	AssignProperty(expr string, field reflect.Value) (bool, error)
+	GetPropertyWithType(expr string, rtp reflect.Type) (any, bool, error)
 }
 
 type propertyManagerImpl struct {
@@ -60,6 +60,7 @@ func (c *propertyManagerImpl) GetProperty(expr string) (any, bool, error) {
 		if err != nil {
 			return nil, false, err
 		}
+		c.loaded = true
 	}
 
 	if len(c.propertyMap) == 0 {
@@ -74,47 +75,21 @@ func (c *propertyManagerImpl) GetProperty(expr string) (any, bool, error) {
 	return property, true, nil
 }
 
-func (c *propertyManagerImpl) AssignProperty(expr string, field reflect.Value) (bool, error) {
+func (c *propertyManagerImpl) GetPropertyWithType(expr string, rtp reflect.Type) (any, bool, error) {
 	property, exist, err := c.GetProperty(expr)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	if !exist {
-		return false, nil
+		return nil, false, nil
 	}
 
-	return c.assignProperty(newFieldImpl(field), property)
-}
-
-func (c *propertyManagerImpl) assignProperty(field Field, property any) (bool, error) {
-	t := field.Type()
-
-	if t.Kind() == reflect.Slice {
-		slice, ok := property.([]any)
-		if !ok {
-			return false, nil
-		}
-
-		for _, a := range slice {
-			convertedType, err := c.convertType(a, t.Elem())
-			if err != nil {
-				return false, err
-			}
-
-			field.Append(convertedType)
-		}
-	} else {
-		convertedType, err := c.convertType(property, field.Type())
-		if err != nil {
-			return false, err
-		}
-		if convertedType == nil {
-			return false, nil
-		}
-		field.Assign(convertedType)
+	v, err := c.convertType(property, rtp)
+	if err != nil {
+		return nil, false, err
 	}
 
-	return true, nil
+	return v, true, nil
 }
 
 func (c *propertyManagerImpl) convertType(property any, t reflect.Type) (any, error) {
@@ -133,7 +108,7 @@ func (c *propertyManagerImpl) convertType(property any, t reflect.Type) (any, er
 		entity := reflect.New(t)
 		for i := 0; i < t.NumField(); i++ {
 			f := t.Field(i)
-			field := newFieldImpl(entity.Elem().Field(i))
+			field := newStructField(entity.Elem().Field(i))
 
 			if f.Anonymous {
 				ok, err := c.assignProperty(field, pm)
@@ -141,7 +116,7 @@ func (c *propertyManagerImpl) convertType(property any, t reflect.Type) (any, er
 					return nil, err
 				}
 				if !ok {
-					return errors.New("failed to assign property"), nil
+					return nil, errors.New("failed to assign property")
 				}
 				continue
 			}
@@ -151,29 +126,46 @@ func (c *propertyManagerImpl) convertType(property any, t reflect.Type) (any, er
 			}
 			v, ok := pm[p]
 			if !ok {
-				return nil, nil
+				continue
 			}
 			ok, err := c.assignProperty(field, v)
 			if err != nil {
 				return nil, err
 			}
 			if !ok {
-				return errors.New("failed to assign property"), nil
+				return nil, errors.New("failed to assign property")
 			}
 		}
 		if isPtr {
 			return entity.Interface(), nil
 		}
 		return entity.Elem().Interface(), nil
+	} else if t.Kind() == reflect.Slice {
+		if isPtr {
+			return nil, errors.New("pointer to slice is not supported")
+		}
+
+		slice, ok := property.([]any)
+		if !ok {
+			return nil, nil
+		}
+
+		sliceVal := reflect.MakeSlice(t, 0, len(slice))
+		for _, a := range slice {
+			convertedType, err := c.convertType(a, t.Elem())
+			if err != nil {
+				return nil, err
+			}
+
+			sliceVal = reflect.Append(sliceVal, reflect.ValueOf(convertedType))
+		}
+
+		return sliceVal.Interface(), nil
 	}
 
 	val, err := c.convertBasicType(property, t, isPtr)
 	if err != nil {
 		return nil, err
-	}
-
-	if isPtr {
-		return val, nil
 	}
 
 	return val, nil
@@ -310,4 +302,35 @@ func (c *propertyManagerImpl) convertBasicType(property any, t reflect.Type, isP
 	default:
 		return nil, nil
 	}
+}
+
+func (c *propertyManagerImpl) assignProperty(field Field, property any) (bool, error) {
+	t := field.Type()
+
+	if t.Kind() == reflect.Slice {
+		slice, ok := property.([]any)
+		if !ok {
+			return false, nil
+		}
+
+		for _, a := range slice {
+			convertedType, err := c.convertType(a, t.Elem())
+			if err != nil {
+				return false, err
+			}
+
+			field.Append(convertedType)
+		}
+	} else {
+		convertedType, err := c.convertType(property, field.Type())
+		if err != nil {
+			return false, err
+		}
+		if convertedType == nil {
+			return false, nil
+		}
+		field.Assign(convertedType)
+	}
+
+	return true, nil
 }

@@ -125,7 +125,7 @@ func (c *ContainerImpl) load() error {
 				continue
 			}
 		}
-		err := c.init(object)
+		err := c.initObject(object)
 		if err != nil {
 			return err
 		}
@@ -134,7 +134,7 @@ func (c *ContainerImpl) load() error {
 	return nil
 }
 
-func (c *ContainerImpl) init(object Object) error {
+func (c *ContainerImpl) initObject(object Object) error {
 	if object.Status() == ObjectStatusInitializing {
 		return fmt.Errorf("circular dependency detected")
 	}
@@ -143,65 +143,94 @@ func (c *ContainerImpl) init(object Object) error {
 	var args []any
 
 	for _, dependency := range object.Dependencies() {
-		var dependencyObject Object
-		if dependency.IsInterface() {
-			implObjects, err := c.objectPool.GetObjectsByInterface(dependency.Type())
+		switch dependency.(type) {
+		case *objectDependency:
+			dep := dependency.(*objectDependency)
+			dependencyObject, err := c.objectPool.Get(dep.ObjectID())
 			if err != nil {
 				return err
 			}
-
-			for _, implObject := range implObjects {
-				if implObject.Name() != dependency.Name() {
-					continue
+			if dependencyObject == nil {
+				if !dependency.Optional() {
+					return newMissingObjectError(dep.ObjectID())
 				}
-
-				if dependencyObject != nil {
-					return fmt.Errorf("ambiguous implementation for interface %s", dependency.ID())
-				}
-				dependencyObject = implObject
-			}
-		} else {
-			var err error
-			dependencyObject, err = c.objectPool.Get(dependency.ID())
-			if err != nil {
-				return err
-			}
-		}
-
-		if dependencyObject == nil {
-			if dependency.Optional() {
 				args = append(args, nil)
 				continue
 			}
-			return fmt.Errorf("missing dependency object <%s>", dependency.ID())
-		}
-		if dependencyObject.Status() != ObjectStatusInitialized {
-			err := c.init(dependencyObject)
+			if dependencyObject.Status() != ObjectStatusInitialized {
+				err = c.initObject(dependencyObject)
+				if err != nil {
+					return err
+				}
+			}
+			args = append(args, dependencyObject.Instance())
+		case *interfaceDependency:
+			dep := dependency.(*interfaceDependency)
+			implObjects, err := c.objectPool.GetObjectsByInterface(dep.Type())
 			if err != nil {
 				return err
 			}
+
+			var dependencyObject Object
+			for _, implObject := range implObjects {
+				if implObject.Name() != dep.Name() {
+					continue
+				}
+				if dependencyObject != nil {
+					return fmt.Errorf("ambiguous implementation for interface %s", dep.FullType())
+				}
+				dependencyObject = implObject
+			}
+
+			if dependencyObject == nil {
+				if !dependency.Optional() {
+					return newMissingImplementationError(dep.FullType())
+				}
+				args = append(args, nil)
+				continue
+			}
+			if dependencyObject.Status() != ObjectStatusInitialized {
+				err = c.initObject(dependencyObject)
+				if err != nil {
+					return err
+				}
+			}
+			args = append(args, dependencyObject.Instance())
+		case *interfaceListDependency:
+			dep := dependency.(*interfaceListDependency)
+			implObjects, err := c.objectPool.GetObjectsByInterface(dep.Type())
+			if err != nil {
+				return err
+			}
+
+			rInterfaceList := reflect.MakeSlice(reflect.SliceOf(dep.Type()), 0, len(implObjects))
+			for _, implObject := range implObjects {
+				if implObject.Status() != ObjectStatusInitialized {
+					err = c.initObject(implObject)
+					if err != nil {
+						return err
+					}
+				}
+				rInterfaceList = reflect.Append(rInterfaceList, reflect.ValueOf(implObject.Instance()))
+			}
+			args = append(args, rInterfaceList.Interface())
+		case *valueDependency:
+			v, ok, err := c.sourceManager.GetPropertyWithType(dependency.Name(), dependency.Type())
+			if err != nil {
+				return err
+			}
+			if !ok && !dependency.Optional() {
+				return fmt.Errorf("dependency value <%s> not found", dependency.Name())
+			}
+			args = append(args, v)
+		default:
+			return fmt.Errorf("unsupported dependency type %s", reflect.TypeOf(dependency))
 		}
-		args = append(args, dependencyObject.Instance())
 	}
 
-	instance, err := object.Build(args)
+	_, err := object.Build(args)
 	if err != nil {
 		return err
-	}
-
-	it := reflect.TypeOf(instance).Elem()
-	for i := 0; i < it.NumField(); i++ {
-		field := it.Field(i)
-		if valueExpr, ok := field.Tag.Lookup("value"); ok {
-			tag := ParseValueTag(valueExpr)
-			exist, err := c.sourceManager.AssignProperty(tag.Value(), reflect.ValueOf(instance).Elem().Field(i))
-			if err != nil {
-				return err
-			}
-			if !tag.Optional() && !exist {
-				return fmt.Errorf("value <%s> not found", valueExpr)
-			}
-		}
 	}
 
 	return nil

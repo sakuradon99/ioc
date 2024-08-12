@@ -103,7 +103,60 @@ type ObjectBuilder interface {
 	Build(ref any, options RegisterOptions) (Object, error)
 }
 
+type baseObjectBuilder struct{}
+
+func (*baseObjectBuilder) parseDependencies(rtp reflect.Type, fIndex []int) ([]Dependency, [][]int, error) {
+	var injectFieldIndexes [][]int
+	var dependencies []Dependency
+
+	var fn func(rtp reflect.Type, fIndex []int) error
+	fn = func(rtp reflect.Type, fIndex []int) error {
+		for i := 0; i < rtp.NumField(); i++ {
+			field := rtp.Field(i)
+			fi := append(fIndex, i)
+			var dependency Dependency
+			if injectTagExpr, ok := field.Tag.Lookup("inject"); ok {
+				injectTag := ParseInjectTag(injectTagExpr)
+				switch field.Type.Kind() {
+				case reflect.Ptr:
+					dependency = newObjectDependency(injectTag.Value(), field.Type.Elem(), injectTag.Optional())
+				case reflect.Interface:
+					dependency = newInterfaceDependency(injectTag.Value(), field.Type, injectTag.Optional())
+				case reflect.Slice:
+					if field.Type.Elem().Kind() != reflect.Interface {
+						return fmt.Errorf("unsupported inject field type <%s>", field.Type.Kind())
+					}
+					dependency = newInterfaceListDependency(injectTag.Value(), field.Type.Elem(), injectTag.Optional())
+				default:
+					return fmt.Errorf("unsupported inject field type <%s>", field.Type.Kind())
+				}
+			} else if valueTagExpr, ok := field.Tag.Lookup("value"); ok {
+				valueTag := ParseValueTag(valueTagExpr)
+				dependency = newValueDependency(valueTag.Value(), field.Type, valueTag.Optional())
+			} else if field.Type.Kind() == reflect.Struct {
+				err := fn(field.Type, fi)
+				if err != nil {
+					return err
+				}
+			}
+			if dependency != nil {
+				injectFieldIndexes = append(injectFieldIndexes, fi)
+				dependencies = append(dependencies, dependency)
+			}
+		}
+		return nil
+	}
+
+	err := fn(rtp, fIndex)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return dependencies, injectFieldIndexes, nil
+}
+
 type fieldsObjectBuilder struct {
+	*baseObjectBuilder
 }
 
 func newFieldsObjectBuilder() *fieldsObjectBuilder {
@@ -111,46 +164,30 @@ func newFieldsObjectBuilder() *fieldsObjectBuilder {
 }
 
 func (f *fieldsObjectBuilder) Build(ref any, options RegisterOptions) (Object, error) {
-	of, err := parseObjectRef(ref, options.Name)
+	objRef, err := parseObjectRef(ref, options.Name)
 	if err != nil {
 		return nil, err
 	}
 
-	var injectFieldIndexes []int
-	var dependencies []Dependency
-	ot := of.Type()
-	for i := 0; i < ot.NumField(); i++ {
-		field := ot.Field(i)
-		if injectTagExpr, ok := field.Tag.Lookup("inject"); ok {
-			injectTag := ParseInjectTag(injectTagExpr)
-			injectFieldIndexes = append(injectFieldIndexes, i)
-			ft := field.Type
-			if ft.Kind() == reflect.Ptr {
-				ft = ft.Elem()
-			} else if ft.Kind() != reflect.Interface {
-				return nil, fmt.Errorf(
-					"unsupported inject field type <%s>, only pointer and interface type are allowed",
-					ft.Kind(),
-				)
-			}
-
-			dependencies = append(dependencies, newDependencyImpl(injectTag.Value(), injectTag.Optional(), ft))
-		}
+	dependencies, injectFieldIndexes, err := f.parseDependencies(objRef.Type(), nil)
+	if err != nil {
+		return nil, err
 	}
+
 	obj := newObject(
-		of,
+		objRef,
 		options.Name,
 		options.ConditionExpr,
 		options.Optional,
 		dependencies,
-		newFieldInstanceBuilder(of.Type(), injectFieldIndexes),
+		newFieldInstanceBuilder(objRef.Type(), injectFieldIndexes),
 	)
 
 	return obj, nil
 }
 
 type constructorObjectBuilder struct {
-	constructor any
+	*baseObjectBuilder
 }
 
 func newConstructorObjectBuilder() *constructorObjectBuilder {
@@ -167,32 +204,49 @@ func (c *constructorObjectBuilder) Build(ref any, options RegisterOptions) (Obje
 	if ct.Kind() != reflect.Func {
 		return nil, fmt.Errorf("unsupported constructor type %s", ct.Kind())
 	}
-	if ct.NumOut() > 2 || ct.NumOut() == 0 ||
-		ct.NumOut() == 2 && ct.Out(1).Name() != "error" {
+	if ct.NumOut() > 2 || ct.NumOut() == 0 || (ct.NumOut() == 2 && ct.Out(1).Name() != "error") {
 		return nil, fmt.Errorf("unsupported constructor")
+	}
+	if reflect.TypeOf(ref) != ct.Out(0) {
+		return nil, fmt.Errorf("constructor doesn't return the object")
 	}
 
 	var dependencies []Dependency
+	var injectArgIndexes [][]int
+
 	for i := 0; i < ct.NumIn(); i++ {
 		pt := ct.In(i)
-		if pt.Kind() == reflect.Ptr {
-			pt = pt.Elem()
-		} else if pt.Kind() != reflect.Interface {
-			return nil, fmt.Errorf(
-				"unsupported constructor param type <%s>, only pointer and interface type are allowed",
-				pt.Kind(),
-			)
+		ai := []int{i}
+		var dependency Dependency
+		switch pt.Kind() {
+		case reflect.Ptr:
+			dependency = newObjectDependency("", pt.Elem(), true)
+		case reflect.Interface:
+			dependency = newInterfaceDependency("", pt, true)
+		case reflect.Struct:
+			deps, indexes, err := c.parseDependencies(pt, ai)
+			if err != nil {
+				return nil, err
+			}
+			dependencies = append(dependencies, deps...)
+			injectArgIndexes = append(injectArgIndexes, indexes...)
+			continue
+		default:
+			return nil, fmt.Errorf("unsupported constructor param type <%s>", pt.Kind())
 		}
-
-		dependencies = append(dependencies, newDependencyImpl("", false, pt))
+		if dependency != nil {
+			dependencies = append(dependencies, dependency)
+			injectArgIndexes = append(injectArgIndexes, ai)
+		}
 	}
+
 	obj := newObject(
 		of,
 		options.Name,
 		options.ConditionExpr,
 		options.Optional,
 		dependencies,
-		newConstructorInstanceBuilder(options.Constructor),
+		newConstructorInstanceBuilder(options.Constructor, injectArgIndexes),
 	)
 
 	return obj, nil

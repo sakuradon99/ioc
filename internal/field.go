@@ -11,27 +11,34 @@ type Field interface {
 	Append(val any)
 }
 
-type fieldImpl struct {
+type structField struct {
 	v reflect.Value
 }
 
-func newFieldImpl(v reflect.Value) *fieldImpl {
+func newStructField(v reflect.Value) *structField {
 	v = reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem()
-	return &fieldImpl{v: v}
+	return &structField{v: v}
 }
 
-func (f *fieldImpl) Type() reflect.Type {
+func (f *structField) Type() reflect.Type {
 	return f.v.Type()
 }
 
-func (f *fieldImpl) Assign(val any) {
+func (f *structField) Assign(val any) {
 	if val == nil {
+		return
+	}
+	if f.v.Kind() == reflect.Slice {
+		vv := reflect.ValueOf(val)
+		for i := 0; i < vv.Len(); i++ {
+			f.v.Set(reflect.Append(f.v, vv.Index(i)))
+		}
 		return
 	}
 	f.v.Set(reflect.ValueOf(val))
 }
 
-func (f *fieldImpl) Append(val any) {
+func (f *structField) Append(val any) {
 	if val == nil {
 		return
 	}
