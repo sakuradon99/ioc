@@ -195,7 +195,12 @@ func (c *ContainerImpl) initObject(object Object) error {
 		}
 	}
 
-	_, err := object.Build(args)
+	instance, err := object.Build(args)
+	if err != nil {
+		return err
+	}
+
+	err = processObjectInitializing(instance)
 	if err != nil {
 		return err
 	}

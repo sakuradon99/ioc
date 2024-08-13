@@ -133,6 +133,15 @@ type ObjectL struct {
 	iList []InterfaceMulti `inject:"r:.*2"`
 }
 
+type ObjectM struct {
+	a *ObjectA `inject:""`
+}
+
+func (o *ObjectM) Init() error {
+	o.a.str = "init"
+	return nil
+}
+
 func Test_IOC_success(t *testing.T) {
 	SetSourceFile("testdata/config.yaml")
 
@@ -338,5 +347,18 @@ func Test_IOC_success(t *testing.T) {
 		assert.Equal(t, 2, len(interfaces))
 		assert.Equal(t, "test2", interfaces[0].TestMulti())
 		assert.Equal(t, "test2", interfaces[1].TestMulti())
+	})
+
+	t.Run("process object initializing", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+		Register[ObjectA]()
+		Register[ObjectM]()
+
+		m, err := GetObject[ObjectM]("")
+		assert.Nil(t, err)
+		assert.NotNil(t, m)
+
+		assert.Equal(t, "init", m.a.str)
+		assert.Equal(t, "str_ptr", *m.a.strPtr)
 	})
 }
