@@ -1,7 +1,7 @@
 package ioc
 
 type RegisterOptions struct {
-	Name          string
+	NameExpr      string
 	Optional      bool
 	Constructor   any
 	ConditionExpr string

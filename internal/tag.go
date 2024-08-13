@@ -2,6 +2,11 @@ package ioc
 
 import "strings"
 
+const (
+	TagInjectKey = "inject"
+	TagValueKey  = "value"
+)
+
 type Tag struct {
 	value   string
 	options []string

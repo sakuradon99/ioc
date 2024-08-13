@@ -50,7 +50,7 @@ func (c *conditionExecutorImpl) Execute(condition string) (bool, error) {
 	}
 	v, ok := result.(bool)
 	if !ok {
-		return false, fmt.Errorf("condition <%s> should return bool", condition)
+		return false, newConditionResultNotBoolError(condition)
 	}
 
 	return v, nil

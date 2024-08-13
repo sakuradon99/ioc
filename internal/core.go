@@ -1,22 +1,20 @@
 package ioc
 
 import (
-	"errors"
-	"fmt"
 	"reflect"
 	"sync"
 )
 
 type Container interface {
 	Register(ref any, opts ...RegisterOption) error
-	GetObject(name string, ref any) (any, error)
+	GetObject(nameExpr string, ref any) (any, error)
+	GetObjects(nameExpr string, ref any) ([]any, error)
 }
 
 type ContainerImpl struct {
 	objectBuilderFactory ObjectBuilderFactory
 	objectPool           ObjectPool
 	sourceManager        PropertyManager
-	conditionExecutor    ConditionExecutor
 	mu                   sync.Mutex
 }
 
@@ -28,7 +26,6 @@ func NewContainerImpl() *ContainerImpl {
 		objectBuilderFactory: newObjectBuilderFactoryImpl(),
 		objectPool:           objectPool,
 		sourceManager:        sourceManager,
-		conditionExecutor:    conditionExecutor,
 	}
 }
 
@@ -47,7 +44,7 @@ func (c *ContainerImpl) Register(ref any, opts ...RegisterOption) error {
 		return err
 	}
 
-	err = c.objectPool.Add(object)
+	err = c.objectPool.AddObject(object)
 	if err != nil {
 		return err
 	}
@@ -55,7 +52,7 @@ func (c *ContainerImpl) Register(ref any, opts ...RegisterOption) error {
 	return nil
 }
 
-func (c *ContainerImpl) GetObject(name string, ref any) (any, error) {
+func (c *ContainerImpl) GetObject(nameExpr string, ref any) (any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -64,50 +61,57 @@ func (c *ContainerImpl) GetObject(name string, ref any) (any, error) {
 		return nil, err
 	}
 
-	of, err := parseObjectRef(ref, name)
+	objRef, err := parseObjectRef(ref)
 	if err != nil {
 		return nil, err
 	}
 
-	switch of.Type().Kind() {
-	case reflect.Interface:
-		objects, err := c.objectPool.GetObjectsByInterface(of.Type())
-		if err != nil {
-			return nil, err
-		}
-		if len(objects) == 0 {
-			return nil, fmt.Errorf("no implementation found for interface %s", of.TypeName())
-		}
-		var instance any
-		for _, object := range objects {
-			if object.Name() != name {
-				continue
-			}
-			if instance != nil {
-				return nil, fmt.Errorf("ambiguous implementation for interface %s", of.TypeName())
-			}
-			instance = object.Instance()
-		}
-		if instance == nil {
-			return nil, fmt.Errorf("no implementation found for interface %s", of.TypeName())
-		}
-		return instance, nil
-	case reflect.Struct:
-		object, err := c.objectPool.Get(of.ObjectID())
-		if err != nil {
-			return nil, err
-		}
-		if object == nil {
-			return nil, fmt.Errorf("object %s not found", of.ObjectID())
-		}
-		return object.Instance(), nil
-	default:
-		return nil, errors.New("unsupported ref")
+	object, err := c.objectPool.GetObject(objRef.RType(), nameExpr)
+	if err != nil {
+		return nil, err
 	}
+	if object == nil {
+		return nil, newMissingObjectError(objRef.FullType(), nameExpr)
+	}
+
+	return object.Instance(), nil
+}
+
+func (c *ContainerImpl) GetObjects(nameExpr string, ref any) ([]any, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	err := c.load()
+	if err != nil {
+		return nil, err
+	}
+
+	objRef, err := parseObjectRef(ref)
+	if err != nil {
+		return nil, err
+	}
+
+	objects, err := c.objectPool.GetObjects(objRef.RType(), nameExpr)
+	if err != nil {
+		return nil, err
+	}
+	if len(objects) == 0 {
+		return nil, newMissingObjectError(objRef.FullType(), nameExpr)
+	}
+
+	var result []any
+	for _, object := range objects {
+		result = append(result, object.Instance())
+	}
+
+	return result, nil
 }
 
 func (c *ContainerImpl) load() error {
-	requiredObjects := c.objectPool.List()
+	requiredObjects, err := c.objectPool.ListObjects()
+	if err != nil {
+		return err
+	}
 
 	for _, object := range requiredObjects {
 		if object.Status() == ObjectStatusInitialized {
@@ -116,16 +120,7 @@ func (c *ContainerImpl) load() error {
 		if object.Optional() {
 			continue
 		}
-		if object.Condition() != "" {
-			ok, err := c.conditionExecutor.Execute(object.Condition())
-			if err != nil {
-				return err
-			}
-			if !ok {
-				continue
-			}
-		}
-		err := c.initObject(object)
+		err = c.initObject(object)
 		if err != nil {
 			return err
 		}
@@ -136,7 +131,7 @@ func (c *ContainerImpl) load() error {
 
 func (c *ContainerImpl) initObject(object Object) error {
 	if object.Status() == ObjectStatusInitializing {
-		return fmt.Errorf("circular dependency detected")
+		return newCircularDependencyError()
 	}
 	object.StartInitialization()
 
@@ -146,13 +141,17 @@ func (c *ContainerImpl) initObject(object Object) error {
 		switch dependency.(type) {
 		case *objectDependency:
 			dep := dependency.(*objectDependency)
-			dependencyObject, err := c.objectPool.Get(dep.ObjectID())
+			dependencyObject, err := c.objectPool.GetObject(dep.RType(), dep.NameExpr())
 			if err != nil {
 				return err
 			}
+
 			if dependencyObject == nil {
 				if !dependency.Optional() {
-					return newMissingObjectError(dep.ObjectID())
+					if dep.isInterface() {
+						return newMissingImplementationError(dep.FullType(), dep.NameExpr())
+					}
+					return newMissingObjectError(dep.FullType(), dep.NameExpr())
 				}
 				args = append(args, nil)
 				continue
@@ -164,46 +163,14 @@ func (c *ContainerImpl) initObject(object Object) error {
 				}
 			}
 			args = append(args, dependencyObject.Instance())
-		case *interfaceDependency:
-			dep := dependency.(*interfaceDependency)
-			implObjects, err := c.objectPool.GetObjectsByInterface(dep.Type())
+		case *objectsDependency:
+			dep := dependency.(*objectsDependency)
+			implObjects, err := c.objectPool.GetObjects(dep.RType(), dep.NameExpr())
 			if err != nil {
 				return err
 			}
 
-			var dependencyObject Object
-			for _, implObject := range implObjects {
-				if implObject.Name() != dep.Name() {
-					continue
-				}
-				if dependencyObject != nil {
-					return fmt.Errorf("ambiguous implementation for interface %s", dep.FullType())
-				}
-				dependencyObject = implObject
-			}
-
-			if dependencyObject == nil {
-				if !dependency.Optional() {
-					return newMissingImplementationError(dep.FullType())
-				}
-				args = append(args, nil)
-				continue
-			}
-			if dependencyObject.Status() != ObjectStatusInitialized {
-				err = c.initObject(dependencyObject)
-				if err != nil {
-					return err
-				}
-			}
-			args = append(args, dependencyObject.Instance())
-		case *interfaceListDependency:
-			dep := dependency.(*interfaceListDependency)
-			implObjects, err := c.objectPool.GetObjectsByInterface(dep.Type())
-			if err != nil {
-				return err
-			}
-
-			rInterfaceList := reflect.MakeSlice(reflect.SliceOf(dep.Type()), 0, len(implObjects))
+			objectList := reflect.MakeSlice(dep.SliceType(), 0, len(implObjects))
 			for _, implObject := range implObjects {
 				if implObject.Status() != ObjectStatusInitialized {
 					err = c.initObject(implObject)
@@ -211,20 +178,20 @@ func (c *ContainerImpl) initObject(object Object) error {
 						return err
 					}
 				}
-				rInterfaceList = reflect.Append(rInterfaceList, reflect.ValueOf(implObject.Instance()))
+				objectList = reflect.Append(objectList, reflect.ValueOf(implObject.Instance()))
 			}
-			args = append(args, rInterfaceList.Interface())
+			args = append(args, objectList.Interface())
 		case *valueDependency:
-			v, ok, err := c.sourceManager.GetPropertyWithType(dependency.Name(), dependency.Type())
+			v, ok, err := c.sourceManager.GetPropertyWithType(dependency.NameExpr(), dependency.RType())
 			if err != nil {
 				return err
 			}
 			if !ok && !dependency.Optional() {
-				return fmt.Errorf("dependency value <%s> not found", dependency.Name())
+				return newMissingValueError(dependency.NameExpr())
 			}
 			args = append(args, v)
 		default:
-			return fmt.Errorf("unsupported dependency type %s", reflect.TypeOf(dependency))
+			return newUnsupportedDependencyType(dependency)
 		}
 	}
 

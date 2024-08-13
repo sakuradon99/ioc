@@ -2,9 +2,9 @@ package ioc
 
 import ioc "github.com/sakuradon99/ioc/internal"
 
-func Name(name string) ioc.RegisterOption {
+func Name(nameExpr string) ioc.RegisterOption {
 	return func(o *ioc.RegisterOptions) {
-		o.Name = name
+		o.NameExpr = nameExpr
 	}
 }
 

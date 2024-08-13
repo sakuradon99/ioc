@@ -3,26 +3,26 @@ package ioc
 import "reflect"
 
 type Dependency interface {
-	Name() string
-	Type() reflect.Type
+	NameExpr() string
+	RType() reflect.Type
 	Optional() bool
 }
 
 type valueDependency struct {
-	name     string
+	keyExpr  string
 	rtp      reflect.Type
 	optional bool
 }
 
-func newValueDependency(name string, rtp reflect.Type, optional bool) *valueDependency {
-	return &valueDependency{name: name, rtp: rtp, optional: optional}
+func newValueDependency(keyExpr string, rtp reflect.Type, optional bool) *valueDependency {
+	return &valueDependency{keyExpr: keyExpr, rtp: rtp, optional: optional}
 }
 
-func (d *valueDependency) Name() string {
-	return d.name
+func (d *valueDependency) NameExpr() string {
+	return d.keyExpr
 }
 
-func (d *valueDependency) Type() reflect.Type {
+func (d *valueDependency) RType() reflect.Type {
 	return d.rtp
 }
 
@@ -34,7 +34,7 @@ type objectDependency struct {
 	name     string
 	rtp      reflect.Type
 	optional bool
-	objectID string
+	fullType string
 }
 
 func newObjectDependency(name string, rtp reflect.Type, optional bool) *objectDependency {
@@ -42,15 +42,15 @@ func newObjectDependency(name string, rtp reflect.Type, optional bool) *objectDe
 		name:     name,
 		rtp:      rtp,
 		optional: optional,
-		objectID: generateObjectID(rtp, name),
+		fullType: generateFullType(rtp),
 	}
 }
 
-func (d *objectDependency) Name() string {
+func (d *objectDependency) NameExpr() string {
 	return d.name
 }
 
-func (d *objectDependency) Type() reflect.Type {
+func (d *objectDependency) RType() reflect.Type {
 	return d.rtp
 }
 
@@ -58,19 +58,23 @@ func (d *objectDependency) Optional() bool {
 	return d.optional
 }
 
-func (d *objectDependency) ObjectID() string {
-	return d.objectID
+func (d *objectDependency) FullType() string {
+	return d.fullType
 }
 
-type interfaceDependency struct {
+func (d *objectDependency) isInterface() bool {
+	return d.rtp.Kind() == reflect.Interface
+}
+
+type objectsDependency struct {
 	name     string
 	rtp      reflect.Type
 	optional bool
 	fullType string
 }
 
-func newInterfaceDependency(name string, rtp reflect.Type, optional bool) *interfaceDependency {
-	return &interfaceDependency{
+func newObjectsDependency(name string, rtp reflect.Type, optional bool) *objectsDependency {
+	return &objectsDependency{
 		name:     name,
 		rtp:      rtp,
 		optional: optional,
@@ -78,28 +82,25 @@ func newInterfaceDependency(name string, rtp reflect.Type, optional bool) *inter
 	}
 }
 
-func (d *interfaceDependency) Name() string {
+func (d *objectsDependency) NameExpr() string {
 	return d.name
 }
 
-func (d *interfaceDependency) Type() reflect.Type {
+func (d *objectsDependency) RType() reflect.Type {
 	return d.rtp
 }
 
-func (d *interfaceDependency) Optional() bool {
+func (d *objectsDependency) Optional() bool {
 	return d.optional
 }
 
-func (d *interfaceDependency) FullType() string {
+func (d *objectsDependency) FullType() string {
 	return d.fullType
 }
 
-type interfaceListDependency struct {
-	*interfaceDependency
-}
-
-func newInterfaceListDependency(name string, rtp reflect.Type, optional bool) *interfaceListDependency {
-	return &interfaceListDependency{
-		interfaceDependency: newInterfaceDependency(name, rtp, optional),
+func (d *objectsDependency) SliceType() reflect.Type {
+	if d.rtp.Kind() == reflect.Interface {
+		return reflect.SliceOf(d.rtp)
 	}
+	return reflect.SliceOf(reflect.New(d.rtp).Type())
 }

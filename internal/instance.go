@@ -52,7 +52,7 @@ func (b *constructorInstanceBuilder) Build(args []any) (any, error) {
 	cv := reflect.ValueOf(b.constructor)
 
 	if ct.Kind() != reflect.Func {
-		return nil, fmt.Errorf("unsupported constructor type %s", ct.Kind())
+		return nil, newUnsupportedConstructorError(b.constructor)
 	}
 
 	var fn func(fv reflect.Value, arg any, fIndex []int)
