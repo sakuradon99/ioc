@@ -10,7 +10,7 @@ type Container interface {
 	GetObject(nameExpr string, rtp reflect.Type) (any, error)
 	GetObjects(nameExpr string, rtp reflect.Type) ([]any, error)
 	GetValue(keyExpr string, rtp reflect.Type) (any, bool, error)
-	SetValue(keyExpr string, val any) error
+	SetValue(keyExpr string, val any)
 }
 
 type ContainerImpl struct {
@@ -117,11 +117,6 @@ func (c *ContainerImpl) GetValue(keyExpr string, rtp reflect.Type) (any, bool, e
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	err := c.load()
-	if err != nil {
-		return nil, false, err
-	}
-
 	value, ok, err := c.valueManager.GetValueWithType(keyExpr, rtp)
 	if err != nil {
 		return nil, false, err
@@ -130,17 +125,11 @@ func (c *ContainerImpl) GetValue(keyExpr string, rtp reflect.Type) (any, bool, e
 	return value, ok, nil
 }
 
-func (c *ContainerImpl) SetValue(keyExpr string, val any) error {
+func (c *ContainerImpl) SetValue(keyExpr string, val any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	err := c.load()
-	if err != nil {
-		return err
-	}
-
 	c.valueManager.SetValue(keyExpr, val)
-	return nil
 }
 
 func (c *ContainerImpl) load() error {

@@ -99,8 +99,8 @@ func GetValue[T any](key string) (T, bool, error) {
 	return val.(T), ok, nil
 }
 
-func SetValue(key string, val any) error {
-	return iocContainer.SetValue(key, val)
+func SetValue(key string, val any) {
+	iocContainer.SetValue(key, val)
 }
 
 func getRefType[T any]() reflect.Type {
