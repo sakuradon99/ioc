@@ -14,7 +14,7 @@ func newUnsupportedRegisterType(rtp reflect.Type) *unsupportedRegisterType {
 }
 
 func (u *unsupportedRegisterType) Error() string {
-	return fmt.Sprintf("unsupported register type %s", u.rtp.Kind())
+	return fmt.Sprintf("unsupported register type <%s>", u.rtp.Kind())
 }
 
 type objectDuplicateRegisterError struct {
@@ -27,7 +27,7 @@ func newObjectDuplicateRegisterError(fullType string, nameExpr string) *objectDu
 }
 
 func (o *objectDuplicateRegisterError) Error() string {
-	return fmt.Sprintf("object %s@%s already duplcate register", o.fullType, o.nameExpr)
+	return fmt.Sprintf("object %s already duplcate register", generateFullName(o.fullType, o.nameExpr))
 }
 
 type missingObjectError struct {
@@ -40,7 +40,7 @@ func newMissingObjectError(fullType string, nameExpr string) *missingObjectError
 }
 
 func (m *missingObjectError) Error() string {
-	return fmt.Sprintf("missing object %s@%s", m.fullType, m.nameExpr)
+	return fmt.Sprintf("missing object %s", generateFullName(m.fullType, m.nameExpr))
 }
 
 type missingImplementationError struct {
@@ -53,33 +53,43 @@ func newMissingImplementationError(fullType string, nameExpr string) *missingImp
 }
 
 func (m *missingImplementationError) Error() string {
-	return fmt.Sprintf("missing implementation %s@%s", m.fullType, m.nameExpr)
+	return fmt.Sprintf("missing implementation <%s>", generateFullName(m.fullType, m.nameExpr))
 }
 
 type multipleObjectError struct {
 	rtp      reflect.Type
 	nameExpr string
+	objects  []Object
 }
 
-func newMultipleObjectError(rtp reflect.Type, nameExpr string) *multipleObjectError {
-	return &multipleObjectError{rtp: rtp, nameExpr: nameExpr}
+func newMultipleObjectError(rtp reflect.Type, nameExpr string, objects []Object) *multipleObjectError {
+	return &multipleObjectError{rtp: rtp, nameExpr: nameExpr, objects: objects}
 }
 
 func (m *multipleObjectError) Error() string {
-	return fmt.Sprintf("multiple objects found for %s@%s", generateFullType(m.rtp), m.nameExpr)
+	var foundObjectFullNames []string
+	for _, object := range m.objects {
+		foundObjectFullNames = append(foundObjectFullNames, generateFullName(object.FullType(), object.Name()))
+	}
+	return fmt.Sprintf("multiple objects found for <%s> %v", generateFullName(generateFullType(m.rtp), m.nameExpr), foundObjectFullNames)
 }
 
 type multipleImplementationError struct {
 	rtp      reflect.Type
 	nameExpr string
+	objects  []Object
 }
 
-func newMultipleImplementationError(rtp reflect.Type, nameExpr string) *multipleImplementationError {
-	return &multipleImplementationError{rtp: rtp, nameExpr: nameExpr}
+func newMultipleImplementationError(rtp reflect.Type, nameExpr string, objects []Object) *multipleImplementationError {
+	return &multipleImplementationError{rtp: rtp, nameExpr: nameExpr, objects: objects}
 }
 
 func (m *multipleImplementationError) Error() string {
-	return fmt.Sprintf("multiple implementations found for %s@%s", generateFullType(m.rtp), m.nameExpr)
+	var foundObjectFullNames []string
+	for _, object := range m.objects {
+		foundObjectFullNames = append(foundObjectFullNames, generateFullName(object.FullType(), object.Name()))
+	}
+	return fmt.Sprintf("multiple implementations found for <%s> %v", generateFullName(generateFullType(m.rtp), m.nameExpr), foundObjectFullNames)
 }
 
 type missingValueError struct {
@@ -91,7 +101,7 @@ func newMissingValueError(value string) *missingValueError {
 }
 
 func (m *missingValueError) Error() string {
-	return fmt.Sprintf("missing value %s", m.value)
+	return fmt.Sprintf("missing value <%s>", m.value)
 }
 
 type unsupportedDependencyType struct {
@@ -103,7 +113,7 @@ func newUnsupportedDependencyType(dependency Dependency) *unsupportedDependencyT
 }
 
 func (u *unsupportedDependencyType) Error() string {
-	return fmt.Sprintf("unsupported dependency type %s", u.dependency.RType())
+	return fmt.Sprintf("unsupported dependency type <%s>", u.dependency.RType())
 }
 
 type circularDependencyError struct {
@@ -138,7 +148,7 @@ func newUnsupportedConstructorError(constructor any) *unsupportedConstructorErro
 }
 
 func (u *unsupportedConstructorError) Error() string {
-	return fmt.Sprintf("unsupported constructor type %s", reflect.TypeOf(u.constructor).Kind())
+	return fmt.Sprintf("unsupported constructor type <%s>", reflect.TypeOf(u.constructor).Kind())
 }
 
 type constructorNotReturnObjectError struct {
@@ -151,7 +161,7 @@ func newConstructorNotReturnObjectError(constructor any, objectType reflect.Type
 }
 
 func (c *constructorNotReturnObjectError) Error() string {
-	return fmt.Sprintf("constructor %s not return object %s", reflect.TypeOf(c.constructor), c.objectType)
+	return fmt.Sprintf("constructor %s not return object <%s>", reflect.TypeOf(c.constructor), c.objectType)
 }
 
 type unsupportedConstructorParamTypeError struct {
@@ -164,7 +174,7 @@ func newUnsupportedConstructorParamTypeError(constructor any, paramType reflect.
 }
 
 func (u *unsupportedConstructorParamTypeError) Error() string {
-	return fmt.Sprintf("unsupported constructor param type %s", u.paramType)
+	return fmt.Sprintf("unsupported constructor param type <%s>", u.paramType)
 }
 
 type unsupportedInjectFieldTypeError struct {
@@ -176,7 +186,7 @@ func newUnsupportedInjectFieldTypeError(field reflect.StructField) *unsupportedI
 }
 
 func (u *unsupportedInjectFieldTypeError) Error() string {
-	return fmt.Sprintf("unsupported inject field type %s", u.field.Type.Kind())
+	return fmt.Sprintf("unsupported inject field type <%s>", u.field.Type.Kind())
 }
 
 type unsupportedObjectTypeError struct {
@@ -188,7 +198,7 @@ func newUnsupportedObjectTypeError(rtp reflect.Type) *unsupportedObjectTypeError
 }
 
 func (u *unsupportedObjectTypeError) Error() string {
-	return fmt.Sprintf("unsupported object type %s", generateFullType(u.rtp))
+	return fmt.Sprintf("unsupported object type <%s>", generateFullType(u.rtp))
 }
 
 type unsupportedObjectRefTypeError struct {

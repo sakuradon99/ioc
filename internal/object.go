@@ -18,7 +18,7 @@ const (
 
 type Object interface {
 	ObjectRef
-	NameExpr() string
+	Name() string
 	Condition() string
 	Dependencies() []Dependency
 	Instance() any
@@ -30,7 +30,7 @@ type Object interface {
 
 type objectImpl struct {
 	ObjectRef
-	nameExpr        string
+	name            string
 	dependencies    []Dependency
 	instanceBuilder InstanceBuilder
 	optional        bool
@@ -42,7 +42,7 @@ type objectImpl struct {
 
 func newObject(
 	of ObjectRef,
-	nameExpr string,
+	name string,
 	condition string,
 	optional bool,
 	dependencies []Dependency,
@@ -50,7 +50,7 @@ func newObject(
 ) *objectImpl {
 	return &objectImpl{
 		ObjectRef:       of,
-		nameExpr:        nameExpr,
+		name:            name,
 		condition:       condition,
 		optional:        optional,
 		dependencies:    dependencies,
@@ -58,8 +58,8 @@ func newObject(
 	}
 }
 
-func (o *objectImpl) NameExpr() string {
-	return o.nameExpr
+func (o *objectImpl) Name() string {
+	return o.name
 }
 
 func (o *objectImpl) Optional() bool {
@@ -310,8 +310,8 @@ func (p *objectPoolImpl) AddObject(object Object) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.registeredObjectTypeToName[object.FullType()][object.NameExpr()] {
-		return newObjectDuplicateRegisterError(object.FullType(), object.NameExpr())
+	if p.registeredObjectTypeToName[object.FullType()][object.Name()] {
+		return newObjectDuplicateRegisterError(object.FullType(), object.Name())
 	}
 	if p.registeredObjectTypeToName == nil {
 		p.registeredObjectTypeToName = make(map[string]map[string]bool)
@@ -319,7 +319,7 @@ func (p *objectPoolImpl) AddObject(object Object) error {
 	if _, ok := p.registeredObjectTypeToName[object.FullType()]; !ok {
 		p.registeredObjectTypeToName[object.FullType()] = make(map[string]bool)
 	}
-	p.registeredObjectTypeToName[object.FullType()][object.NameExpr()] = true
+	p.registeredObjectTypeToName[object.FullType()][object.Name()] = true
 	p.objects = append(p.objects, object)
 	return nil
 }
@@ -353,9 +353,9 @@ func (p *objectPoolImpl) GetObject(rtp reflect.Type, nameExpr string) (Object, e
 	}
 	if len(objects) > 1 {
 		if rtp.Kind() == reflect.Interface {
-			return nil, newMultipleImplementationError(rtp, nameExpr)
+			return nil, newMultipleImplementationError(rtp, nameExpr, objects)
 		}
-		return nil, newMultipleObjectError(rtp, nameExpr)
+		return nil, newMultipleObjectError(rtp, nameExpr, objects)
 	}
 
 	return objects[0], nil
@@ -423,9 +423,9 @@ func (p *objectPoolImpl) checkObjectCondition(obj Object) (bool, error) {
 func (p *objectPoolImpl) checkObjectName(obj Object, nameExpr string) (bool, error) {
 	if strings.HasPrefix(nameExpr, "r:") {
 		reg := strings.TrimPrefix(nameExpr, "r:")
-		return regexp.MatchString(reg, obj.NameExpr())
+		return regexp.MatchString(reg, obj.Name())
 	}
-	return obj.NameExpr() == nameExpr, nil
+	return obj.Name() == nameExpr, nil
 }
 
 type ObjectRef interface {
@@ -469,4 +469,8 @@ func generateFullType(t reflect.Type) string {
 		return t.Name()
 	}
 	return fmt.Sprintf("%s.%s", t.PkgPath(), t.Name())
+}
+
+func generateFullName(fullType, name string) string {
+	return fmt.Sprintf("%s@%s", fullType, name)
 }
