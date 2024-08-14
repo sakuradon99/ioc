@@ -9,7 +9,7 @@ import (
 var iocContainer ioc.Container = ioc.NewContainerImpl()
 
 func Register[T any](opts ...ioc.RegisterOption) any {
-	err := iocContainer.Register(new(T), opts...)
+	err := iocContainer.Register(getRefType[T](), opts...)
 	if err != nil {
 		panic(err)
 	}
@@ -18,12 +18,12 @@ func Register[T any](opts ...ioc.RegisterOption) any {
 }
 
 func GetObject[T any](name string) (*T, error) {
-	ref := new(T)
-	if reflect.TypeOf(ref).Elem().Kind() != reflect.Struct {
+	rtp := getRefType[T]()
+	if rtp.Kind() != reflect.Struct {
 		return nil, errors.New("ref is not a struct")
 	}
 
-	obj, err := iocContainer.GetObject(name, ref)
+	obj, err := iocContainer.GetObject(name, getRefType[T]())
 	if err != nil {
 		return nil, err
 	}
@@ -32,12 +32,12 @@ func GetObject[T any](name string) (*T, error) {
 }
 
 func GetObjects[T any](name string) ([]*T, error) {
-	ref := new(T)
-	if reflect.TypeOf(ref).Elem().Kind() != reflect.Struct {
+	rtp := getRefType[T]()
+	if rtp.Kind() != reflect.Struct {
 		return nil, errors.New("ref is not a struct")
 	}
 
-	objs, err := iocContainer.GetObjects(name, ref)
+	objs, err := iocContainer.GetObjects(name, getRefType[T]())
 	if err != nil {
 		return nil, err
 	}
@@ -50,13 +50,13 @@ func GetObjects[T any](name string) ([]*T, error) {
 }
 
 func GetInterface[T any](name string) (T, error) {
-	ref := new(T)
 	var ret T
-	if reflect.TypeOf(ref).Elem().Kind() != reflect.Interface {
-		return ret, errors.New("ref is not an interface")
+	rtp := getRefType[T]()
+	if rtp.Kind() != reflect.Interface {
+		return ret, errors.New("ref is not a interface")
 	}
 
-	obj, err := iocContainer.GetObject(name, ref)
+	obj, err := iocContainer.GetObject(name, getRefType[T]())
 	if err != nil {
 		return ret, err
 	}
@@ -65,18 +65,17 @@ func GetInterface[T any](name string) (T, error) {
 }
 
 func GetInterfaces[T any](name string) ([]T, error) {
-	ref := new(T)
-	var ret []T
-	if reflect.TypeOf(ref).Elem().Kind() != reflect.Interface {
-		return ret, errors.New("ref is not an interface")
+	rtp := getRefType[T]()
+	if rtp.Kind() != reflect.Interface {
+		return nil, errors.New("ref is not a interface")
 	}
 
-	objs, err := iocContainer.GetObjects(name, ref)
+	objs, err := iocContainer.GetObjects(name, getRefType[T]())
 	if err != nil {
-		return ret, err
+		return nil, err
 	}
 
-	ret = make([]T, len(objs))
+	ret := make([]T, len(objs))
 	for i, obj := range objs {
 		ret[i] = obj.(T)
 	}
@@ -85,4 +84,25 @@ func GetInterfaces[T any](name string) ([]T, error) {
 
 func SetSourceFile(file string) {
 	ioc.SourceFile = file
+}
+
+func GetValue[T any](key string) (T, bool, error) {
+	var defaultVal T
+	val, ok, err := iocContainer.GetValue(key, getRefType[T]())
+	if err != nil {
+		return defaultVal, false, err
+	}
+	if !ok {
+		return defaultVal, false, nil
+	}
+
+	return val.(T), ok, nil
+}
+
+func SetValue(key string, val any) error {
+	return iocContainer.SetValue(key, val)
+}
+
+func getRefType[T any]() reflect.Type {
+	return reflect.TypeOf(new(T)).Elem()
 }

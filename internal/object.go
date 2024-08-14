@@ -103,7 +103,7 @@ func (o *objectImpl) Build(args []any) (any, error) {
 }
 
 type ObjectBuilder interface {
-	Build(ref any, options RegisterOptions) (Object, error)
+	Build(rtp reflect.Type, options RegisterOptions) (Object, error)
 }
 
 type baseObjectBuilder struct{}
@@ -173,8 +173,8 @@ func newFieldsObjectBuilder() *fieldsObjectBuilder {
 	return &fieldsObjectBuilder{}
 }
 
-func (f *fieldsObjectBuilder) Build(ref any, options RegisterOptions) (Object, error) {
-	objRef, err := parseObjectRef(ref)
+func (f *fieldsObjectBuilder) Build(rtp reflect.Type, options RegisterOptions) (Object, error) {
+	objRef, err := parseObjectRef(rtp)
 	if err != nil {
 		return nil, err
 	}
@@ -204,8 +204,8 @@ func newConstructorObjectBuilder() *constructorObjectBuilder {
 	return &constructorObjectBuilder{}
 }
 
-func (c *constructorObjectBuilder) Build(ref any, options RegisterOptions) (Object, error) {
-	of, err := parseObjectRef(ref)
+func (c *constructorObjectBuilder) Build(rtp reflect.Type, options RegisterOptions) (Object, error) {
+	of, err := parseObjectRef(rtp)
 	if err != nil {
 		return nil, err
 	}
@@ -217,8 +217,8 @@ func (c *constructorObjectBuilder) Build(ref any, options RegisterOptions) (Obje
 	if ct.NumOut() > 2 || ct.NumOut() == 0 || (ct.NumOut() == 2 && ct.Out(1).Name() != "error") {
 		return nil, newUnsupportedConstructorError(options.Constructor)
 	}
-	if reflect.TypeOf(ref) != ct.Out(0) {
-		return nil, newConstructorNotReturnObjectError(options.Constructor, reflect.TypeOf(ref))
+	if ct.Out(0).Kind() != reflect.Ptr || rtp != ct.Out(0).Elem() {
+		return nil, newConstructorNotReturnObjectError(options.Constructor, rtp)
 	}
 
 	var dependencies []Dependency
@@ -429,28 +429,22 @@ func (p *objectPoolImpl) checkObjectName(obj Object, nameExpr string) (bool, err
 }
 
 type ObjectRef interface {
-	Ref() any
 	RType() reflect.Type
 	FullType() string
 	Implements(rtp reflect.Type) bool
 }
 
 type objectRefImpl struct {
-	ref      any
-	t        reflect.Type
+	rtp      reflect.Type
 	fullType string
 }
 
-func newObjectRef(ref any, t reflect.Type, fullType string) *objectRefImpl {
-	return &objectRefImpl{ref: ref, t: t, fullType: fullType}
-}
-
-func (o *objectRefImpl) Ref() any {
-	return o.ref
+func newObjectRef(t reflect.Type, fullType string) *objectRefImpl {
+	return &objectRefImpl{rtp: t, fullType: fullType}
 }
 
 func (o *objectRefImpl) RType() reflect.Type {
-	return o.t
+	return o.rtp
 }
 
 func (o *objectRefImpl) FullType() string {
@@ -458,21 +452,16 @@ func (o *objectRefImpl) FullType() string {
 }
 
 func (o *objectRefImpl) Implements(rtp reflect.Type) bool {
-	return reflect.TypeOf(o.ref).Implements(rtp)
+	return o.rtp.Implements(rtp) || reflect.New(o.rtp).Type().Implements(rtp)
 }
 
-func parseObjectRef(ref any) (ObjectRef, error) {
-	rt := reflect.TypeOf(ref)
-	if rt.Kind() != reflect.Ptr {
-		return nil, newObjectRefNotPointerError(rt)
+func parseObjectRef(rtp reflect.Type) (ObjectRef, error) {
+	if rtp.Kind() != reflect.Struct && rtp.Kind() != reflect.Interface {
+		return nil, newUnsupportedObjectRefTypeError(rtp)
 	}
-	rt = rt.Elem()
-	if rt.Kind() != reflect.Struct && rt.Kind() != reflect.Interface {
-		return nil, newUnsupportedObjectRefTypeError(rt)
-	}
-	fullType := generateFullType(rt)
+	fullType := generateFullType(rtp)
 
-	return newObjectRef(ref, rt, fullType), nil
+	return newObjectRef(rtp, fullType), nil
 }
 
 func generateFullType(t reflect.Type) string {

@@ -14,10 +14,10 @@ type ConditionExecutor interface {
 }
 
 type conditionExecutorImpl struct {
-	sourceManager PropertyManager
+	sourceManager ValueManager
 }
 
-func newConditionExecutorImpl(sourceManager PropertyManager) *conditionExecutorImpl {
+func newConditionExecutorImpl(sourceManager ValueManager) *conditionExecutorImpl {
 	return &conditionExecutorImpl{sourceManager: sourceManager}
 }
 

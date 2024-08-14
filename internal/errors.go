@@ -5,6 +5,18 @@ import (
 	"reflect"
 )
 
+type unsupportedRegisterType struct {
+	rtp reflect.Type
+}
+
+func newUnsupportedRegisterType(rtp reflect.Type) *unsupportedRegisterType {
+	return &unsupportedRegisterType{rtp: rtp}
+}
+
+func (u *unsupportedRegisterType) Error() string {
+	return fmt.Sprintf("unsupported register type %s", u.rtp.Kind())
+}
+
 type objectDuplicateRegisterError struct {
 	fullType string
 	nameExpr string
@@ -177,18 +189,6 @@ func newUnsupportedObjectTypeError(rtp reflect.Type) *unsupportedObjectTypeError
 
 func (u *unsupportedObjectTypeError) Error() string {
 	return fmt.Sprintf("unsupported object type %s", generateFullType(u.rtp))
-}
-
-type objectRefNotPointerError struct {
-	rtp reflect.Type
-}
-
-func newObjectRefNotPointerError(rtp reflect.Type) *objectRefNotPointerError {
-	return &objectRefNotPointerError{rtp: rtp}
-}
-
-func (o *objectRefNotPointerError) Error() string {
-	return fmt.Sprintf("object ref <%s> not a pointer", o.rtp.Kind())
 }
 
 type unsupportedObjectRefTypeError struct {

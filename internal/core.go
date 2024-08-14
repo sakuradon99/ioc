@@ -6,30 +6,36 @@ import (
 )
 
 type Container interface {
-	Register(ref any, opts ...RegisterOption) error
-	GetObject(nameExpr string, ref any) (any, error)
-	GetObjects(nameExpr string, ref any) ([]any, error)
+	Register(rtp reflect.Type, opts ...RegisterOption) error
+	GetObject(nameExpr string, rtp reflect.Type) (any, error)
+	GetObjects(nameExpr string, rtp reflect.Type) ([]any, error)
+	GetValue(keyExpr string, rtp reflect.Type) (any, bool, error)
+	SetValue(keyExpr string, val any) error
 }
 
 type ContainerImpl struct {
 	objectBuilderFactory ObjectBuilderFactory
 	objectPool           ObjectPool
-	sourceManager        PropertyManager
+	valueManager         ValueManager
 	mu                   sync.Mutex
 }
 
 func NewContainerImpl() *ContainerImpl {
-	sourceManager := newPropertyManagerImpl()
-	conditionExecutor := newConditionExecutorImpl(sourceManager)
+	valueManager := newValueManagerImpl()
+	conditionExecutor := newConditionExecutorImpl(valueManager)
 	objectPool := newObjectPoolImpl(conditionExecutor)
 	return &ContainerImpl{
 		objectBuilderFactory: newObjectBuilderFactoryImpl(),
 		objectPool:           objectPool,
-		sourceManager:        sourceManager,
+		valueManager:         valueManager,
 	}
 }
 
-func (c *ContainerImpl) Register(ref any, opts ...RegisterOption) error {
+func (c *ContainerImpl) Register(rtp reflect.Type, opts ...RegisterOption) error {
+	if rtp.Kind() != reflect.Struct {
+		return newUnsupportedRegisterType(rtp)
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -39,7 +45,7 @@ func (c *ContainerImpl) Register(ref any, opts ...RegisterOption) error {
 	}
 
 	ob := c.objectBuilderFactory.GetBuilder(options)
-	object, err := ob.Build(ref, options)
+	object, err := ob.Build(rtp, options)
 	if err != nil {
 		return err
 	}
@@ -52,7 +58,7 @@ func (c *ContainerImpl) Register(ref any, opts ...RegisterOption) error {
 	return nil
 }
 
-func (c *ContainerImpl) GetObject(nameExpr string, ref any) (any, error) {
+func (c *ContainerImpl) GetObject(nameExpr string, rtp reflect.Type) (any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -61,7 +67,7 @@ func (c *ContainerImpl) GetObject(nameExpr string, ref any) (any, error) {
 		return nil, err
 	}
 
-	objRef, err := parseObjectRef(ref)
+	objRef, err := parseObjectRef(rtp)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +83,7 @@ func (c *ContainerImpl) GetObject(nameExpr string, ref any) (any, error) {
 	return object.Instance(), nil
 }
 
-func (c *ContainerImpl) GetObjects(nameExpr string, ref any) ([]any, error) {
+func (c *ContainerImpl) GetObjects(nameExpr string, rtp reflect.Type) ([]any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -86,7 +92,7 @@ func (c *ContainerImpl) GetObjects(nameExpr string, ref any) ([]any, error) {
 		return nil, err
 	}
 
-	objRef, err := parseObjectRef(ref)
+	objRef, err := parseObjectRef(rtp)
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +111,36 @@ func (c *ContainerImpl) GetObjects(nameExpr string, ref any) ([]any, error) {
 	}
 
 	return result, nil
+}
+
+func (c *ContainerImpl) GetValue(keyExpr string, rtp reflect.Type) (any, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	err := c.load()
+	if err != nil {
+		return nil, false, err
+	}
+
+	value, ok, err := c.valueManager.GetValueWithType(keyExpr, rtp)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return value, ok, nil
+}
+
+func (c *ContainerImpl) SetValue(keyExpr string, val any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	err := c.load()
+	if err != nil {
+		return err
+	}
+
+	c.valueManager.SetValue(keyExpr, val)
+	return nil
 }
 
 func (c *ContainerImpl) load() error {
@@ -182,7 +218,7 @@ func (c *ContainerImpl) initObject(object Object) error {
 			}
 			args = append(args, objectList.Interface())
 		case *valueDependency:
-			v, ok, err := c.sourceManager.GetPropertyWithType(dependency.NameExpr(), dependency.RType())
+			v, ok, err := c.valueManager.GetValueWithType(dependency.NameExpr(), dependency.RType())
 			if err != nil {
 				return err
 			}

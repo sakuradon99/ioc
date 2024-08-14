@@ -7,13 +7,14 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 )
 
 var SourceFile = "./config/application.yaml"
 
-type propertyMap map[string]any
+type valueMap map[string]any
 
-func (m propertyMap) GetProperty(keys []string) any {
+func (m valueMap) GetValue(keys []string) any {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -24,58 +25,91 @@ func (m propertyMap) GetProperty(keys []string) any {
 		return value
 	}
 
-	next, ok := value.(propertyMap)
+	next, ok := value.(valueMap)
 	if !ok {
 		return nil
 	}
 
-	return next.GetProperty(keys[1:])
+	return next.GetValue(keys[1:])
 }
 
-type PropertyManager interface {
+func (m valueMap) SetValue(keys []string, value any) {
+	if len(keys) == 0 {
+		return
+	}
+
+	key := keys[0]
+	if len(keys) == 1 {
+		m[key] = value
+		return
+	}
+
+	next, ok := m[key].(valueMap)
+	if !ok {
+		next = make(valueMap)
+		m[key] = next
+	}
+
+	next.SetValue(keys[1:], value)
+}
+
+type ValueManager interface {
 	GetProperty(expr string) (any, bool, error)
-	GetPropertyWithType(expr string, rtp reflect.Type) (any, bool, error)
+	GetValueWithType(expr string, rtp reflect.Type) (any, bool, error)
+	SetValue(expr string, value any)
 }
 
-type propertyManagerImpl struct {
-	loaded      bool
-	propertyMap propertyMap
+type valueManagerImpl struct {
+	mu              sync.Mutex
+	loaded          bool
+	sourceValueMap  valueMap
+	runningValueMap valueMap
 }
 
-func newPropertyManagerImpl() *propertyManagerImpl {
-	return &propertyManagerImpl{
-		loaded:      false,
-		propertyMap: make(propertyMap),
+func newValueManagerImpl() *valueManagerImpl {
+	return &valueManagerImpl{
+		loaded:          false,
+		sourceValueMap:  make(valueMap),
+		runningValueMap: make(valueMap),
 	}
 }
 
-func (c *propertyManagerImpl) GetProperty(expr string) (any, bool, error) {
+func (c *valueManagerImpl) GetProperty(expr string) (any, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	keys := strings.Split(expr, ".")
+	value := c.runningValueMap.GetValue(keys)
+	if value != nil {
+		return value, true, nil
+	}
+
 	if !c.loaded {
 		content, err := os.ReadFile(SourceFile)
 		if err != nil {
 			return nil, false, err
 		}
 
-		err = yaml.Unmarshal(content, &c.propertyMap)
+		err = yaml.Unmarshal(content, &c.sourceValueMap)
 		if err != nil {
 			return nil, false, err
 		}
 		c.loaded = true
 	}
 
-	if len(c.propertyMap) == 0 {
+	if len(c.sourceValueMap) == 0 {
 		return nil, false, nil
 	}
 
-	property := c.propertyMap.GetProperty(strings.Split(expr, "."))
-	if property == nil {
+	value = c.sourceValueMap.GetValue(keys)
+	if value == nil {
 		return nil, false, nil
 	}
 
-	return property, true, nil
+	return value, true, nil
 }
 
-func (c *propertyManagerImpl) GetPropertyWithType(expr string, rtp reflect.Type) (any, bool, error) {
+func (c *valueManagerImpl) GetValueWithType(expr string, rtp reflect.Type) (any, bool, error) {
 	property, exist, err := c.GetProperty(expr)
 	if err != nil {
 		return nil, false, err
@@ -92,7 +126,15 @@ func (c *propertyManagerImpl) GetPropertyWithType(expr string, rtp reflect.Type)
 	return v, true, nil
 }
 
-func (c *propertyManagerImpl) convertType(property any, t reflect.Type) (any, error) {
+func (c *valueManagerImpl) SetValue(expr string, value any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	keys := strings.Split(expr, ".")
+	c.runningValueMap.SetValue(keys, value)
+}
+
+func (c *valueManagerImpl) convertType(property any, t reflect.Type) (any, error) {
 	var isPtr bool
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
@@ -100,7 +142,7 @@ func (c *propertyManagerImpl) convertType(property any, t reflect.Type) (any, er
 	}
 
 	if t.Kind() == reflect.Struct {
-		pm, ok := property.(propertyMap)
+		pm, ok := property.(valueMap)
 		if !ok {
 			return nil, nil
 		}
@@ -171,7 +213,7 @@ func (c *propertyManagerImpl) convertType(property any, t reflect.Type) (any, er
 	return val, nil
 }
 
-func (c *propertyManagerImpl) convertBasicType(property any, t reflect.Type, isPtr bool) (any, error) {
+func (c *valueManagerImpl) convertBasicType(property any, t reflect.Type, isPtr bool) (any, error) {
 	switch t.Kind() {
 	case reflect.String:
 		val, err := cast.ToStringE(property)
@@ -304,7 +346,7 @@ func (c *propertyManagerImpl) convertBasicType(property any, t reflect.Type, isP
 	}
 }
 
-func (c *propertyManagerImpl) assignProperty(field Field, property any) (bool, error) {
+func (c *valueManagerImpl) assignProperty(field Field, property any) (bool, error) {
 	t := field.Type()
 
 	if t.Kind() == reflect.Slice {

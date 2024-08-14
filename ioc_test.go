@@ -361,4 +361,52 @@ func Test_IOC_success(t *testing.T) {
 		assert.Equal(t, "init", m.a.str)
 		assert.Equal(t, "str_ptr", *m.a.strPtr)
 	})
+
+	t.Run("get / set value", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+
+		str, ok, err := GetValue[string]("str")
+		assert.Nil(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "str", str)
+
+		strPtr, ok, err := GetValue[*string]("str_ptr")
+		assert.Nil(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "str_ptr", *strPtr)
+
+		strOpt, ok, err := GetValue[*string]("str_opt")
+		assert.Nil(t, err)
+		assert.False(t, ok)
+		assert.Nil(t, strOpt)
+
+		strArr, ok, err := GetValue[[]string]("string_arr")
+		assert.Nil(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, []string{"str_1", "str_2"}, strArr)
+
+		err = SetValue("str", "new_str")
+		assert.Nil(t, err)
+		str, ok, err = GetValue[string]("str")
+		assert.Nil(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "new_str", str)
+
+		err = SetValue("str_opt", "new_str_opt")
+		assert.Nil(t, err)
+		strOpt, ok, err = GetValue[*string]("str_opt")
+		assert.Nil(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "new_str_opt", *strOpt)
+
+		unknownField, ok, err := GetValue[string]("unknown.field")
+		assert.Nil(t, err)
+		assert.False(t, ok)
+		assert.Equal(t, "", unknownField)
+		err = SetValue("unknown.field", "new_str")
+		unknownField, ok, err = GetValue[string]("unknown.field")
+		assert.Nil(t, err)
+		assert.True(t, ok)
+		assert.Equal(t, "new_str", unknownField)
+	})
 }
