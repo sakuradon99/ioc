@@ -23,7 +23,7 @@ func GetObject[T any](name string) (*T, error) {
 		return nil, errors.New("ref is not a struct")
 	}
 
-	obj, err := iocContainer.GetObject(name, getRefType[T]())
+	obj, err := iocContainer.GetObject(name, rtp)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +37,7 @@ func GetObjects[T any](name string) ([]*T, error) {
 		return nil, errors.New("ref is not a struct")
 	}
 
-	objs, err := iocContainer.GetObjects(name, getRefType[T]())
+	objs, err := iocContainer.GetObjects(name, rtp)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +56,7 @@ func GetInterface[T any](name string) (T, error) {
 		return ret, errors.New("ref is not a interface")
 	}
 
-	obj, err := iocContainer.GetObject(name, getRefType[T]())
+	obj, err := iocContainer.GetObject(name, rtp)
 	if err != nil {
 		return ret, err
 	}
@@ -70,7 +70,7 @@ func GetInterfaces[T any](name string) ([]T, error) {
 		return nil, errors.New("ref is not a interface")
 	}
 
-	objs, err := iocContainer.GetObjects(name, getRefType[T]())
+	objs, err := iocContainer.GetObjects(name, rtp)
 	if err != nil {
 		return nil, err
 	}
