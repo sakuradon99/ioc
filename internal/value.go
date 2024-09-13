@@ -10,7 +10,7 @@ import (
 	"sync"
 )
 
-var SourceFile = "./config/application.yaml"
+var SourceFile = "./configs/application.yaml"
 
 type valueMap map[string]any
 
