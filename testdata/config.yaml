@@ -1,0 +1,42 @@
+str: str
+str_ptr: str_ptr
+int: 1
+float: 0.99
+bool: true
+string_arr:
+  - str_1
+  - str_2
+string_ptr_arr:
+  - str_ptr_1
+  - str_ptr_2
+next:
+  str: next_str
+  int: 2
+property_stu:
+  str: str
+  str_ptr: str_ptr
+  int: 1
+  float: 0.99
+  bool: true
+  string_arr:
+    - str_1
+    - str_2
+  string_ptr_arr:
+    - str_ptr_1
+    - str_ptr_2
+nested_stu:
+  str: str
+  str_ptr: str_ptr
+  int: 1
+  float: 0.99
+  bool: true
+  string_arr:
+    - str_1
+    - str_2
+  string_ptr_arr:
+    - str_ptr_1
+    - str_ptr_2
+  str_2: str_2
+
+condition:
+  use_impl_multi: 2
