@@ -24,7 +24,7 @@ type Object interface {
 	Instance() any
 	Status() ObjectStatus
 	StartInitialization()
-	Build(args []any) (any, error)
+	Build(args []any) error
 	Optional() bool
 }
 
@@ -37,7 +37,7 @@ type objectImpl struct {
 	optional        bool
 	condition       string
 	instance        any
-	inited          bool
+	initialized     bool
 	initializing    bool
 }
 
@@ -86,7 +86,7 @@ func (o *objectImpl) Instance() any {
 }
 
 func (o *objectImpl) Status() ObjectStatus {
-	if o.inited {
+	if o.initialized {
 		return ObjectStatusInitialized
 	}
 	if o.initializing {
@@ -99,14 +99,19 @@ func (o *objectImpl) StartInitialization() {
 	o.initializing = true
 }
 
-func (o *objectImpl) Build(args []any) (any, error) {
+func (o *objectImpl) Build(args []any) error {
 	instance, err := o.instanceBuilder.Build(args)
 	if err != nil {
-		return nil, err
+		return err
 	}
+
+	if err = processObjectInitializing(instance); err != nil {
+		return err
+	}
+
 	o.instance = instance
-	o.inited = true
-	return instance, nil
+	o.initialized = true
+	return nil
 }
 
 type ObjectBuilder interface {
@@ -516,5 +521,5 @@ func generateFullType(t reflect.Type) string {
 }
 
 func generateFullName(fullType, name string) string {
-	return fmt.Sprintf("%s@%s", fullType, name)
+	return fmt.Sprintf(`%s@"%s"`, fullType, name)
 }

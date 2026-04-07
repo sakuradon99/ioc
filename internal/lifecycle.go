@@ -1,12 +1,15 @@
 package ioc
 
-type ObjectInitializing interface {
+type ObjectInitable interface {
 	Init() error
 }
 
 func processObjectInitializing(instance any) error {
-	if oi, ok := instance.(ObjectInitializing); ok {
-		return oi.Init()
+	if instance == nil {
+		return nil
+	}
+	if obj, ok := instance.(ObjectInitable); ok {
+		return obj.Init()
 	}
 	return nil
 }

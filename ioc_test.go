@@ -1,6 +1,7 @@
 package ioc
 
 import (
+	"errors"
 	ioc "github.com/sakuradon99/ioc/internal"
 	"github.com/stretchr/testify/assert"
 	"testing"
@@ -154,6 +155,14 @@ type ObjectO struct {
 
 type ObjectP struct {
 	iMap map[string]InterfaceMulti `inject:"*"`
+}
+
+type ObjectCircularA struct {
+	b *ObjectCircularB `inject:""`
+}
+
+type ObjectCircularB struct {
+	a *ObjectCircularA `inject:""`
 }
 
 func Test_IOC_success(t *testing.T) {
@@ -472,5 +481,91 @@ func Test_IOC_success(t *testing.T) {
 		assert.Nil(t, err)
 		assert.True(t, ok)
 		assert.Equal(t, "str", v)
+	})
+}
+
+func Test_IOC_error(t *testing.T) {
+	t.Run("add nil value provider", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+
+		err := AddValueProvider(nil)
+		assert.EqualError(t, err, "provider cannot be nil")
+	})
+
+	t.Run("get value not exists", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+		_ = AddValueProvider(NewMapValueProvider(map[string]any{
+			"exist": "value",
+		}))
+
+		v, ok, err := GetValue[string]("not_exist")
+		assert.Nil(t, err)
+		assert.False(t, ok)
+		assert.Equal(t, "", v)
+	})
+
+	t.Run("get value with type mismatch", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+		_ = AddValueProvider(NewMapValueProvider(map[string]any{
+			"str": "abc",
+		}))
+
+		v, ok, err := GetValue[int]("str")
+		assert.Error(t, err)
+		assert.False(t, ok)
+		assert.Equal(t, 0, v)
+	})
+
+	t.Run("get object/list/map with non-struct type", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+
+		obj, err := GetObject[int]("")
+		assert.Nil(t, obj)
+		assert.EqualError(t, err, "ref is not a struct")
+
+		objList, err := GetObjectList[int]("")
+		assert.Nil(t, objList)
+		assert.EqualError(t, err, "ref is not a struct")
+
+		objMap, err := GetObjectMap[int]("")
+		assert.Nil(t, objMap)
+		assert.EqualError(t, err, "ref is not a struct")
+	})
+
+	t.Run("get interface/list/map with non-interface type", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+
+		itf, err := GetInterface[ObjectA]("")
+		assert.Equal(t, ObjectA{}, itf)
+		assert.EqualError(t, err, "ref is not a interface")
+
+		itfList, err := GetInterfaceList[ObjectA]("")
+		assert.Nil(t, itfList)
+		assert.EqualError(t, err, "ref is not a interface")
+
+		itfMap, err := GetInterfaceMap[ObjectA]("")
+		assert.Nil(t, itfMap)
+		assert.EqualError(t, err, "ref is not a interface")
+	})
+
+	t.Run("print injection stack with non-injection error", func(t *testing.T) {
+		assert.Equal(t, "", PrintErrorInjectionStack(nil))
+		assert.Equal(t, "", PrintErrorInjectionStack(errors.New("normal error")))
+	})
+
+	t.Run("print injection stack with circular dependency error", func(t *testing.T) {
+		iocContainer = ioc.NewContainerImpl()
+		Register[ObjectCircularA]()
+		Register[ObjectCircularB]()
+
+		a, err := GetObject[ObjectCircularA]("")
+		assert.Nil(t, a)
+		assert.Error(t, err)
+
+		stack := PrintErrorInjectionStack(err)
+		assert.NotEmpty(t, stack)
+		assert.Contains(t, stack, "ObjectCircularA")
+		assert.Contains(t, stack, "ObjectCircularB")
+		assert.Contains(t, stack, "** ")
 	})
 }

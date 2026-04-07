@@ -19,6 +19,7 @@ type ContainerImpl struct {
 	objectManager        ObjectManager
 	valueManager         ValueManager
 	mu                   sync.Mutex
+	destroyMu            sync.Mutex
 }
 
 func NewContainerImpl() *ContainerImpl {
@@ -171,6 +172,8 @@ func (c *ContainerImpl) GetValue(keyExpr string, rtp reflect.Type) (any, bool, e
 }
 
 func (c *ContainerImpl) load() error {
+	ctx := NewContext(nil, nil)
+
 	requiredObjects, err := c.objectManager.ListObjects()
 	if err != nil {
 		return err
@@ -183,7 +186,7 @@ func (c *ContainerImpl) load() error {
 		if object.Optional() {
 			continue
 		}
-		err = c.initObject(object)
+		err = c.initObject(ctx, object)
 		if err != nil {
 			return err
 		}
@@ -192,9 +195,10 @@ func (c *ContainerImpl) load() error {
 	return nil
 }
 
-func (c *ContainerImpl) initObject(object Object) error {
+func (c *ContainerImpl) initObject(ctx *InjectContext, object Object) error {
+	ctx = NewContext(ctx, object)
 	if object.Status() == ObjectStatusInitializing {
-		return newCircularDependencyError()
+		return newCircularDependencyError(ctx)
 	}
 	object.StartInitialization()
 
@@ -205,11 +209,11 @@ func (c *ContainerImpl) initObject(object Object) error {
 		var err error
 		switch dependency.(type) {
 		case *objectDependency:
-			arg, err = c.getDependencyObject(dependency.(*objectDependency))
+			arg, err = c.getDependencyObjectInstance(ctx, dependency.(*objectDependency))
 		case *objectListDependency:
-			arg, err = c.getDependencyObjectList(dependency.(*objectListDependency))
+			arg, err = c.getDependencyObjectInstanceList(ctx, dependency.(*objectListDependency))
 		case *objectMapDependency:
-			arg, err = c.getDependencyObjectMap(dependency.(*objectMapDependency))
+			arg, err = c.getDependencyObjectInstanceMap(ctx, dependency.(*objectMapDependency))
 		case *valueDependency:
 			arg, err = c.getDependencyValue(dependency.(*valueDependency))
 		default:
@@ -221,20 +225,14 @@ func (c *ContainerImpl) initObject(object Object) error {
 		args = append(args, arg)
 	}
 
-	instance, err := object.Build(args)
-	if err != nil {
-		return err
-	}
-
-	err = processObjectInitializing(instance)
-	if err != nil {
+	if err := object.Build(args); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (c *ContainerImpl) getDependencyObject(dep *objectDependency) (any, error) {
+func (c *ContainerImpl) getDependencyObjectInstance(ctx *InjectContext, dep *objectDependency) (any, error) {
 	dependencyObject, err := c.objectManager.GetObject(dep.RType(), dep.NameExpr())
 	if err != nil {
 		return nil, err
@@ -248,7 +246,7 @@ func (c *ContainerImpl) getDependencyObject(dep *objectDependency) (any, error) 
 	}
 
 	if dependencyObject.Status() != ObjectStatusInitialized {
-		err = c.initObject(dependencyObject)
+		err = c.initObject(ctx, dependencyObject)
 		if err != nil {
 			return nil, err
 		}
@@ -257,7 +255,7 @@ func (c *ContainerImpl) getDependencyObject(dep *objectDependency) (any, error) 
 	return dependencyObject.Instance(), nil
 }
 
-func (c *ContainerImpl) getDependencyObjectList(dep *objectListDependency) (any, error) {
+func (c *ContainerImpl) getDependencyObjectInstanceList(ctx *InjectContext, dep *objectListDependency) (any, error) {
 	implObjects, err := c.objectManager.GetObjects(dep.RType(), dep.NameExpr())
 	if err != nil {
 		return nil, err
@@ -273,7 +271,7 @@ func (c *ContainerImpl) getDependencyObjectList(dep *objectListDependency) (any,
 	objectList := reflect.MakeSlice(dep.SliceType(), 0, len(implObjects))
 	for _, implObject := range implObjects {
 		if implObject.Status() != ObjectStatusInitialized {
-			err = c.initObject(implObject)
+			err = c.initObject(ctx, implObject)
 			if err != nil {
 				return nil, err
 			}
@@ -284,7 +282,7 @@ func (c *ContainerImpl) getDependencyObjectList(dep *objectListDependency) (any,
 	return objectList.Interface(), nil
 }
 
-func (c *ContainerImpl) getDependencyObjectMap(dep *objectMapDependency) (any, error) {
+func (c *ContainerImpl) getDependencyObjectInstanceMap(ctx *InjectContext, dep *objectMapDependency) (any, error) {
 	implObjects, err := c.objectManager.GetObjects(dep.RType(), dep.NameExpr())
 	if err != nil {
 		return nil, err
@@ -300,7 +298,7 @@ func (c *ContainerImpl) getDependencyObjectMap(dep *objectMapDependency) (any, e
 	objectMap := reflect.MakeMapWithSize(dep.MapType(), len(implObjects))
 	for _, implObject := range implObjects {
 		if implObject.Status() != ObjectStatusInitialized {
-			err = c.initObject(implObject)
+			err = c.initObject(ctx, implObject)
 			if err != nil {
 				return nil, err
 			}

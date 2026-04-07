@@ -2,8 +2,9 @@ package ioc
 
 import (
 	"errors"
-	ioc "github.com/sakuradon99/ioc/internal"
 	"reflect"
+
+	ioc "github.com/sakuradon99/ioc/internal"
 )
 
 var iocContainer ioc.Container = ioc.NewContainerImpl()
@@ -105,7 +106,6 @@ func GetInterfaceMap[T any](name string) (map[string]T, error) {
 	if rtp.Kind() != reflect.Interface {
 		return nil, errors.New("ref is not a interface")
 	}
-
 	objs, err := iocContainer.GetObjectMap(name, rtp)
 	if err != nil {
 		return nil, err
@@ -138,4 +138,17 @@ func GetValue[T any](key string) (T, bool, error) {
 	}
 
 	return val.(T), ok, nil
+}
+
+func PrintErrorInjectionStack(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	injectionStack, ok := err.(ioc.InjectionStack)
+	if !ok {
+		return ""
+	}
+
+	return injectionStack.Stack()
 }

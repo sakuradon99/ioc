@@ -3,7 +3,64 @@ package ioc
 import (
 	"fmt"
 	"reflect"
+	"strings"
 )
+
+type InjectionStack interface {
+	Stack() string
+}
+
+type injectionStack struct {
+	ctx *InjectContext
+}
+
+func (i *injectionStack) Stack() string {
+	if i == nil || i.ctx == nil {
+		return ""
+	}
+
+	var chain []string
+	for current := i.ctx; current != nil; current = current.parentContext {
+		if current.initializingObject == nil {
+			continue
+		}
+
+		fullName := generateFullName(
+			current.initializingObject.FullType(),
+			current.initializingObject.Name(),
+		)
+		chain = append(chain, fullName)
+	}
+
+	for left, right := 0, len(chain)-1; left < right; left, right = left+1, right-1 {
+		chain[left], chain[right] = chain[right], chain[left]
+	}
+
+	if len(chain) == 0 {
+		return ""
+	}
+
+	var builder strings.Builder
+	seen := make(map[string]bool, len(chain))
+	for idx, fullName := range chain {
+		if idx == 0 {
+			builder.WriteString("** ")
+			builder.WriteString(fullName)
+			seen[fullName] = true
+			continue
+		}
+		builder.WriteString("\n")
+		if seen[fullName] {
+			builder.WriteString("~> ")
+		} else {
+			builder.WriteString("-> ")
+		}
+		builder.WriteString(fullName)
+		seen[fullName] = true
+	}
+
+	return builder.String()
+}
 
 type unsupportedRegisterType struct {
 	rtp reflect.Type
@@ -27,7 +84,7 @@ func newObjectDuplicateRegisterError(fullType string, nameExpr string) *objectDu
 }
 
 func (o *objectDuplicateRegisterError) Error() string {
-	return fmt.Sprintf("object <%s> already duplcate register", generateFullName(o.fullType, o.nameExpr))
+	return fmt.Sprintf("object <%s> already duplicate register", generateFullName(o.fullType, o.nameExpr))
 }
 
 type missingObjectError struct {
@@ -117,10 +174,15 @@ func (u *unsupportedDependencyType) Error() string {
 }
 
 type circularDependencyError struct {
+	*injectionStack
 }
 
-func newCircularDependencyError() *circularDependencyError {
-	return &circularDependencyError{}
+func newCircularDependencyError(ctx *InjectContext) *circularDependencyError {
+	return &circularDependencyError{
+		injectionStack: &injectionStack{
+			ctx: ctx,
+		},
+	}
 }
 
 func (c *circularDependencyError) Error() string {
