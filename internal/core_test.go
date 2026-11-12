@@ -98,7 +98,7 @@ type deepRoot struct{ L level1 }
 func TestDeeplyNestedInjectFields(t *testing.T) {
 	c := newStartedContainer(t, nil, typeOf[leafA](), typeOf[leafB](), typeOf[deepRoot]())
 
-	obj, err := c.GetObject("", typeOf[deepRoot]())
+	obj, err := c.GetObject(typeOf[deepRoot]())
 	require.NoError(t, err)
 	r := obj.(*deepRoot)
 	assert.NotNil(t, r.L.L.L.A)
@@ -136,7 +136,7 @@ func TestValueConversion(t *testing.T) {
 		"nested":  map[string]any{"opt": "o", "port": 8080},
 	}, typeOf[valueCfg]())
 
-	obj, err := c.GetObject("", typeOf[valueCfg]())
+	obj, err := c.GetObject(typeOf[valueCfg]())
 	require.NoError(t, err)
 	cfg := obj.(*valueCfg)
 	assert.Equal(t, level(3), cfg.Level)
@@ -184,7 +184,7 @@ type needsFoo struct {
 func TestAnonymousInterfacesDoNotCollide(t *testing.T) {
 	c := newStartedContainer(t, nil, typeOf[fooImpl](), typeOf[needsFoo](), typeOf[needsBar]())
 
-	obj, err := c.GetObject("", typeOf[needsBar]())
+	obj, err := c.GetObject(typeOf[needsBar]())
 	require.NoError(t, err)
 	assert.Nil(t, obj.(*needsBar).B)
 }
@@ -218,11 +218,11 @@ func TestConcurrentGet(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			obj, err := c.GetObject("", typeOf[concurrentObj]())
+			obj, err := c.GetObject(typeOf[concurrentObj]())
 			assert.NoError(t, err)
 			_, _, err = c.GetValue("k", typeOf[string]())
 			assert.NoError(t, err)
-			_, err = c.GetObjectList("", typeOf[depObj]())
+			_, err = c.GetObjectList(typeOf[depObj]())
 			assert.NoError(t, err)
 			results[i] = obj
 		}(i)
@@ -269,7 +269,7 @@ func TestShutdownWhileGetting(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := c.GetObject("", typeOf[depObj]())
+			_, err := c.GetObject(typeOf[depObj]())
 			if err != nil {
 				assert.ErrorIs(t, err, ErrShutdown)
 			}

@@ -90,26 +90,30 @@ func Dump() string {
 	return iocContainer.Dump()
 }
 
-func GetObject[T any](name string) (*T, error) {
+// GetObject gets the object of struct type T. It tries names in order and returns the object
+// found by the first name that matches any. No names is the same as a single empty name.
+func GetObject[T any](names ...string) (*T, error) {
 	rtp := getRefType[T]()
 	if rtp.Kind() != reflect.Struct {
 		return nil, errors.New("ref is not a struct")
 	}
 
-	obj, err := iocContainer.GetObject(name, rtp)
+	obj, err := iocContainer.GetObject(rtp, names...)
 	if err != nil {
 		return nil, err
 	}
 	return castTo[*T](obj)
 }
 
-func GetObjectList[T any](name string) ([]*T, error) {
+// GetObjectList gets all the objects of struct type T matched by any of names, without duplicates.
+// No names is the same as a single empty name, which matches objects of any name.
+func GetObjectList[T any](names ...string) ([]*T, error) {
 	rtp := getRefType[T]()
 	if rtp.Kind() != reflect.Struct {
 		return nil, errors.New("ref is not a struct")
 	}
 
-	objs, err := iocContainer.GetObjectList(name, rtp)
+	objs, err := iocContainer.GetObjectList(rtp, names...)
 	if err != nil {
 		return nil, err
 	}
@@ -117,13 +121,14 @@ func GetObjectList[T any](name string) ([]*T, error) {
 	return castList[*T](objs)
 }
 
-func GetObjectMap[T any](name string) (map[string]*T, error) {
+// GetObjectMap is like GetObjectList, keyed by object name.
+func GetObjectMap[T any](names ...string) (map[string]*T, error) {
 	rtp := getRefType[T]()
 	if rtp.Kind() != reflect.Struct {
 		return nil, errors.New("ref is not a struct")
 	}
 
-	nameToObject, err := iocContainer.GetObjectMap(name, rtp)
+	nameToObject, err := iocContainer.GetObjectMap(rtp, names...)
 	if err != nil {
 		return nil, err
 	}
@@ -131,27 +136,31 @@ func GetObjectMap[T any](name string) (map[string]*T, error) {
 	return castMap[*T](nameToObject)
 }
 
-func GetInterface[T any](name string) (T, error) {
+// GetInterface gets the object implementing interface T. It tries names in order and returns the object
+// found by the first name that matches any. No names is the same as a single empty name.
+func GetInterface[T any](names ...string) (T, error) {
 	var ret T
 	rtp := getRefType[T]()
 	if rtp.Kind() != reflect.Interface {
 		return ret, errors.New("ref is not an interface")
 	}
 
-	obj, err := iocContainer.GetObject(name, rtp)
+	obj, err := iocContainer.GetObject(rtp, names...)
 	if err != nil {
 		return ret, err
 	}
 	return castTo[T](obj)
 }
 
-func GetInterfaceList[T any](name string) ([]T, error) {
+// GetInterfaceList gets all the objects implementing interface T matched by any of names, without duplicates.
+// No names is the same as a single empty name, which matches objects of any name.
+func GetInterfaceList[T any](names ...string) ([]T, error) {
 	rtp := getRefType[T]()
 	if rtp.Kind() != reflect.Interface {
 		return nil, errors.New("ref is not an interface")
 	}
 
-	objs, err := iocContainer.GetObjectList(name, rtp)
+	objs, err := iocContainer.GetObjectList(rtp, names...)
 	if err != nil {
 		return nil, err
 	}
@@ -159,12 +168,13 @@ func GetInterfaceList[T any](name string) ([]T, error) {
 	return castList[T](objs)
 }
 
-func GetInterfaceMap[T any](name string) (map[string]T, error) {
+// GetInterfaceMap is like GetInterfaceList, keyed by object name.
+func GetInterfaceMap[T any](names ...string) (map[string]T, error) {
 	rtp := getRefType[T]()
 	if rtp.Kind() != reflect.Interface {
 		return nil, errors.New("ref is not an interface")
 	}
-	objs, err := iocContainer.GetObjectMap(name, rtp)
+	objs, err := iocContainer.GetObjectMap(rtp, names...)
 	if err != nil {
 		return nil, err
 	}

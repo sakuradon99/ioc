@@ -353,6 +353,67 @@ func TestPrimaryIsIgnoredWithName(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Multiple names
+// ---------------------------------------------------------------------------
+
+func TestGetWithMultipleNames(t *testing.T) {
+	newTestContainer(t)
+	Register[pluginOne](Name("plugin1"))
+	Register[pluginTwo](Name("plugin2"))
+	startContainer(t)
+
+	t.Run("single object tries names in order", func(t *testing.T) {
+		p, err := GetInterface[Plugin]("missing", "plugin2", "plugin1")
+		require.NoError(t, err)
+		assert.Equal(t, "plugin2", p.ID())
+
+		p, err = GetInterface[Plugin]("plugin1", "plugin2")
+		require.NoError(t, err)
+		assert.Equal(t, "plugin1", p.ID())
+
+		obj, err := GetObject[pluginTwo]("missing", "plugin2")
+		require.NoError(t, err)
+		assert.NotNil(t, obj)
+	})
+
+	t.Run("single object with no names is the same as an empty name", func(t *testing.T) {
+		_, err := GetInterface[Plugin]()
+		assert.ErrorContains(t, err, `multiple implementations found for <github.com/sakuradon99/ioc.Plugin@"">`)
+
+		obj, err := GetObject[pluginOne]()
+		require.NoError(t, err)
+		assert.NotNil(t, obj)
+	})
+
+	t.Run("single object stops at an ambiguous name", func(t *testing.T) {
+		_, err := GetInterface[Plugin]("plugin*", "plugin1")
+		assert.Error(t, err)
+	})
+
+	t.Run("single object not found by any name", func(t *testing.T) {
+		_, err := GetInterface[Plugin]("a", "b")
+		assert.EqualError(t, err, `missing implementation of <github.com/sakuradon99/ioc.Plugin@"a,b">`)
+	})
+
+	t.Run("list and map get the union without duplicates", func(t *testing.T) {
+		list, err := GetInterfaceList[Plugin]("plugin2", "plugin1", "plugin*", "missing")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"plugin2", "plugin1"}, pluginIDs(list))
+
+		m, err := GetInterfaceMap[Plugin]("plugin1", "plugin2")
+		require.NoError(t, err)
+		assert.Len(t, m, 2)
+
+		list, err = GetInterfaceList[Plugin]()
+		require.NoError(t, err)
+		assert.Len(t, list, 2, "no names matches all")
+
+		_, err = GetInterfaceList[Plugin]("a", "b")
+		assert.Error(t, err)
+	})
+}
+
+// ---------------------------------------------------------------------------
 // Provide
 // ---------------------------------------------------------------------------
 

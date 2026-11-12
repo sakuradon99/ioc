@@ -42,7 +42,7 @@ func main() {
     }
     defer ioc.Shutdown(context.Background())
 
-    svc, err := ioc.GetObject[UserService]("")
+    svc, err := ioc.GetObject[UserService]()
     // ...
 }
 ```
@@ -152,7 +152,7 @@ The tag value is a name expression, matched against the object names and aliases
 
 ### Matching Rules
 
-For a single object with an empty name expression (`inject:""`, constructor params, `GetObject[T]("")`), candidates are matched by type:
+For a single object with an empty name expression (`inject:""`, constructor params, `GetObject[T]()`), candidates are matched by type:
 
 1. the only unnamed object, otherwise
 2. the only `Primary` object, otherwise
@@ -231,16 +231,19 @@ name, ok, err := ioc.GetValue[string]("app.name")
 ## Getting Objects
 
 ```go
-svc, err := ioc.GetObject[MyService]("")                  // *MyService
+svc, err := ioc.GetObject[MyService]()                    // *MyService
 list, err := ioc.GetObjectList[MyService]("service*")     // []*MyService
 m, err := ioc.GetObjectMap[MyService]("service*")         // map[string]*MyService
 
-g, err := ioc.GetInterface[Greeter]("english")            // Greeter
-gs, err := ioc.GetInterfaceList[Greeter]("*")             // []Greeter
-gm, err := ioc.GetInterfaceMap[Greeter]("*")              // map[string]Greeter
+g, err := ioc.GetInterface[Greeter]("chinese", "english") // Greeter
+gs, err := ioc.GetInterfaceList[Greeter]("en*", "zh*")    // []Greeter
+gm, err := ioc.GetInterfaceMap[Greeter]()                 // map[string]Greeter
 ```
 
-The name follows the same rules as the `inject` tag.
+Each name follows the same rules as the `inject` tag, and passing no name is the same as passing `""`.
+
+- `GetObject` / `GetInterface` try the names in order and return the object found by the first name that matches any. A name matching multiple objects is an error.
+- The list and map variants return all the objects matched by any of the names, without duplicates.
 
 ## Errors and Debugging
 
@@ -287,12 +290,12 @@ container: started, 3 object(s)
 
 ### Objects
 
-- `GetObject[T any](name string) (*T, error)`
-- `GetObjectList[T any](name string) ([]*T, error)`
-- `GetObjectMap[T any](name string) (map[string]*T, error)`
-- `GetInterface[T any](name string) (T, error)`
-- `GetInterfaceList[T any](name string) ([]T, error)`
-- `GetInterfaceMap[T any](name string) (map[string]T, error)`
+- `GetObject[T any](names ...string) (*T, error)`
+- `GetObjectList[T any](names ...string) ([]*T, error)`
+- `GetObjectMap[T any](names ...string) (map[string]*T, error)`
+- `GetInterface[T any](names ...string) (T, error)`
+- `GetInterfaceList[T any](names ...string) ([]T, error)`
+- `GetInterfaceMap[T any](names ...string) (map[string]T, error)`
 
 ### Values
 

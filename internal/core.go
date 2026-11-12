@@ -19,9 +19,14 @@ type Container interface {
 	Start(ctx context.Context) error
 	// Shutdown destroys the initialized objects in reverse initialization order.
 	Shutdown(ctx context.Context) error
-	GetObject(nameExpr string, rtp reflect.Type) (any, error)
-	GetObjectList(nameExpr string, rtp reflect.Type) ([]any, error)
-	GetObjectMap(nameExpr string, rtp reflect.Type) (map[string]any, error)
+	// GetObject tries nameExprs in order and returns the object matched by the first one that matches any.
+	// No nameExprs is the same as a single empty nameExpr.
+	GetObject(rtp reflect.Type, nameExprs ...string) (any, error)
+	// GetObjectList returns the objects matched by any of nameExprs, without duplicates.
+	// No nameExprs is the same as a single empty nameExpr, which matches objects of any name.
+	GetObjectList(rtp reflect.Type, nameExprs ...string) ([]any, error)
+	// GetObjectMap is like GetObjectList, keyed by object name.
+	GetObjectMap(rtp reflect.Type, nameExprs ...string) (map[string]any, error)
 	GetValue(keyExpr string, rtp reflect.Type) (any, bool, error)
 	// Dump describes the registered objects and their dependencies, for debugging.
 	Dump() string
@@ -260,37 +265,41 @@ func (c *ContainerImpl) Shutdown(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (c *ContainerImpl) GetObject(nameExpr string, rtp reflect.Type) (any, error) {
+func (c *ContainerImpl) GetObject(rtp reflect.Type, nameExprs ...string) (any, error) {
+	nameExprs = normalizeNameExprs(nameExprs)
 	objRef, err := c.beginRead(rtp)
 	if err != nil {
 		return nil, err
 	}
 	defer c.mu.RUnlock()
 
-	object, err := c.objectManager.GetObject(objRef.RType(), nameExpr, true)
-	if err != nil {
-		return nil, err
-	}
-	if object == nil {
-		return nil, c.notFoundError(objRef, nameExpr)
+	for _, nameExpr := range nameExprs {
+		object, err := c.objectManager.GetObject(objRef.RType(), nameExpr, true)
+		if err != nil {
+			return nil, err
+		}
+		if object != nil {
+			return object.Instance(), nil
+		}
 	}
 
-	return object.Instance(), nil
+	return nil, c.notFoundError(objRef, nameExprs)
 }
 
-func (c *ContainerImpl) GetObjectList(nameExpr string, rtp reflect.Type) ([]any, error) {
+func (c *ContainerImpl) GetObjectList(rtp reflect.Type, nameExprs ...string) ([]any, error) {
+	nameExprs = normalizeNameExprs(nameExprs)
 	objRef, err := c.beginRead(rtp)
 	if err != nil {
 		return nil, err
 	}
 	defer c.mu.RUnlock()
 
-	objects, err := c.objectManager.GetObjects(objRef.RType(), nameExpr, true)
+	objects, err := c.getObjects(objRef, nameExprs, true)
 	if err != nil {
 		return nil, err
 	}
 	if len(objects) == 0 {
-		return nil, c.notFoundError(objRef, nameExpr)
+		return nil, c.notFoundError(objRef, nameExprs)
 	}
 
 	result := make([]any, 0, len(objects))
@@ -301,19 +310,20 @@ func (c *ContainerImpl) GetObjectList(nameExpr string, rtp reflect.Type) ([]any,
 	return result, nil
 }
 
-func (c *ContainerImpl) GetObjectMap(nameExpr string, rtp reflect.Type) (map[string]any, error) {
+func (c *ContainerImpl) GetObjectMap(rtp reflect.Type, nameExprs ...string) (map[string]any, error) {
+	nameExprs = normalizeNameExprs(nameExprs)
 	objRef, err := c.beginRead(rtp)
 	if err != nil {
 		return nil, err
 	}
 	defer c.mu.RUnlock()
 
-	objects, err := c.objectManager.GetObjects(objRef.RType(), nameExpr, true)
+	objects, err := c.getObjects(objRef, nameExprs, true)
 	if err != nil {
 		return nil, err
 	}
 	if len(objects) == 0 {
-		return nil, c.notFoundError(objRef, nameExpr)
+		return nil, c.notFoundError(objRef, nameExprs)
 	}
 
 	nameToObject := make(map[string]any, len(objects))
@@ -325,6 +335,34 @@ func (c *ContainerImpl) GetObjectMap(nameExpr string, rtp reflect.Type) (map[str
 	}
 
 	return nameToObject, nil
+}
+
+// getObjects returns the objects matched by any of nameExprs, in the order of nameExprs, without duplicates.
+func (c *ContainerImpl) getObjects(objRef ObjectRef, nameExprs []string, initializedOnly bool) ([]Object, error) {
+	var result []Object
+	seen := make(map[Object]bool)
+	for _, nameExpr := range nameExprs {
+		objects, err := c.objectManager.GetObjects(objRef.RType(), nameExpr, initializedOnly)
+		if err != nil {
+			return nil, err
+		}
+		for _, object := range objects {
+			if seen[object] {
+				continue
+			}
+			seen[object] = true
+			result = append(result, object)
+		}
+	}
+	return result, nil
+}
+
+// normalizeNameExprs treats no nameExprs as a single empty nameExpr.
+func normalizeNameExprs(nameExprs []string) []string {
+	if len(nameExprs) == 0 {
+		return []string{""}
+	}
+	return nameExprs
 }
 
 // beginRead checks the container is started and takes the read lock, which the caller must release.
@@ -346,8 +384,9 @@ func (c *ContainerImpl) beginRead(rtp reflect.Type) (ObjectRef, error) {
 }
 
 // notFoundError tells apart a missing object from an optional object nobody depended on.
-func (c *ContainerImpl) notFoundError(objRef ObjectRef, nameExpr string) error {
-	if objects, _ := c.objectManager.GetObjects(objRef.RType(), nameExpr, false); len(objects) > 0 {
+func (c *ContainerImpl) notFoundError(objRef ObjectRef, nameExprs []string) error {
+	nameExpr := strings.Join(nameExprs, ",")
+	if objects, _ := c.getObjects(objRef, nameExprs, false); len(objects) > 0 {
 		return newObjectNotInitializedError(objRef.FullType(), nameExpr)
 	}
 	if objRef.RType().Kind() == reflect.Interface {
