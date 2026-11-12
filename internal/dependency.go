@@ -51,6 +51,17 @@ type objectDependency struct {
 	rtp      reflect.Type
 	optional bool
 	fullType string
+	// anyName allows falling back to an object with any name when no object matches nameExpr.
+	// Used for constructor params, which have no tag to specify a name.
+	anyName bool
+}
+
+// newConstructorParamDependency creates a required dependency for a constructor param.
+// It prefers the object with empty name, and falls back to the only object of that type with any name.
+func newConstructorParamDependency(rtp reflect.Type) *objectDependency {
+	d := newObjectDependency("", rtp, false)
+	d.anyName = true
+	return d
 }
 
 func newObjectDependency(nameExpr string, rtp reflect.Type, optional bool) *objectDependency {

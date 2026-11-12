@@ -287,3 +287,37 @@ func newDuplicateNameObjectError(rtp reflect.Type, nameExpr string) *duplicateNa
 func (d *duplicateNameObjectError) Error() string {
 	return fmt.Sprintf(`duplicate name "%s" for type [%s]`, d.nameExpr, generateFullType(d.rtp))
 }
+
+type constructorReturnNilError struct {
+	constructor any
+}
+
+func newConstructorReturnNilError(constructor any) *constructorReturnNilError {
+	return &constructorReturnNilError{constructor: constructor}
+}
+
+func (e *constructorReturnNilError) Error() string {
+	return fmt.Sprintf("constructor <%s> returned nil object without error", reflect.TypeOf(e.constructor))
+}
+
+type valueConvertError struct {
+	property any
+	rtp      reflect.Type
+	cause    error
+}
+
+func newValueConvertError(property any, rtp reflect.Type, cause error) *valueConvertError {
+	return &valueConvertError{property: property, rtp: rtp, cause: cause}
+}
+
+func (e *valueConvertError) Error() string {
+	msg := fmt.Sprintf("cannot convert value <%v> of type <%T> to <%s>", e.property, e.property, e.rtp)
+	if e.cause != nil {
+		msg += ": " + e.cause.Error()
+	}
+	return msg
+}
+
+func (e *valueConvertError) Unwrap() error {
+	return e.cause
+}

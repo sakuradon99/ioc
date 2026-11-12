@@ -76,7 +76,9 @@ func (b *constructorInstanceBuilder) Build(args []any) (any, error) {
 		}
 		index := indexes[0]
 		if len(indexes) == 1 {
-			incomes[index].Set(reflect.ValueOf(arg))
+			if arg != nil {
+				incomes[index].Set(reflect.ValueOf(arg))
+			}
 			continue
 		}
 		fn(incomes[index], arg, indexes[1:])
@@ -85,6 +87,10 @@ func (b *constructorInstanceBuilder) Build(args []any) (any, error) {
 	outcomes := cv.Call(incomes)
 	if len(outcomes) == 2 && !outcomes[1].IsNil() {
 		return nil, outcomes[1].Interface().(error)
+	}
+
+	if outcomes[0].IsNil() {
+		return nil, newConstructorReturnNilError(b.constructor)
 	}
 
 	return outcomes[0].Interface(), nil

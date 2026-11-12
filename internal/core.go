@@ -2,7 +2,6 @@ package ioc
 
 import (
 	"reflect"
-	"sync"
 )
 
 type Container interface {
@@ -18,8 +17,8 @@ type ContainerImpl struct {
 	objectBuilderFactory ObjectBuilderFactory
 	objectManager        ObjectManager
 	valueManager         ValueManager
-	mu                   sync.Mutex
-	destroyMu            sync.Mutex
+	// mu is reentrant so that Init() of an object may call back into the container on the same goroutine.
+	mu reentrantMutex
 }
 
 func NewContainerImpl() *ContainerImpl {
@@ -81,6 +80,9 @@ func (c *ContainerImpl) GetObject(nameExpr string, rtp reflect.Type) (any, error
 	if object == nil {
 		return nil, newMissingObjectError(objRef.FullType(), nameExpr)
 	}
+	if err = c.ensureInitialized(object); err != nil {
+		return nil, err
+	}
 
 	return object.Instance(), nil
 }
@@ -107,8 +109,11 @@ func (c *ContainerImpl) GetObjectList(nameExpr string, rtp reflect.Type) ([]any,
 		return nil, newMissingObjectError(objRef.FullType(), nameExpr)
 	}
 
-	var result []any
+	result := make([]any, 0, len(objects))
 	for _, object := range objects {
+		if err = c.ensureInitialized(object); err != nil {
+			return nil, err
+		}
 		result = append(result, object.Instance())
 	}
 
@@ -138,13 +143,12 @@ func (c *ContainerImpl) GetObjectMap(nameExpr string, rtp reflect.Type) (map[str
 	}
 
 	nameToObject := make(map[string]any, len(objects))
-	for _, obj := range objects {
-		object, ok := obj.(Object)
-		if !ok {
-			return nil, newUnsupportedObjectTypeError(rtp)
-		}
+	for _, object := range objects {
 		if _, exist := nameToObject[object.Name()]; exist {
 			return nil, newDuplicateNameObjectError(objRef.RType(), nameExpr)
+		}
+		if err = c.ensureInitialized(object); err != nil {
+			return nil, err
 		}
 		nameToObject[object.Name()] = object.Instance()
 	}
@@ -152,17 +156,13 @@ func (c *ContainerImpl) GetObjectMap(nameExpr string, rtp reflect.Type) (map[str
 	return nameToObject, nil
 }
 
+// AddValueProvider and GetValue only touch the value manager, which has its own lock.
+// They don't take the container lock, so they are safe to call from Init() on any goroutine.
 func (c *ContainerImpl) AddValueProvider(provider ValueProvider) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.valueManager.AddValueProvider(provider)
 }
 
 func (c *ContainerImpl) GetValue(keyExpr string, rtp reflect.Type) (any, bool, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	value, ok, err := c.valueManager.GetValueWithType(keyExpr, rtp)
 	if err != nil {
 		return nil, false, err
@@ -180,7 +180,8 @@ func (c *ContainerImpl) load() error {
 	}
 
 	for _, object := range requiredObjects {
-		if object.Status() == ObjectStatusInitialized {
+		// Initializing objects are being built further up the stack (reentrant call from Init()).
+		if object.Status() != ObjectStatusDefault {
 			continue
 		}
 		if object.Optional() {
@@ -195,12 +196,25 @@ func (c *ContainerImpl) load() error {
 	return nil
 }
 
-func (c *ContainerImpl) initObject(ctx *InjectContext, object Object) error {
+// ensureInitialized initializes an object fetched directly, e.g. an optional object skipped by load().
+func (c *ContainerImpl) ensureInitialized(object Object) error {
+	if object.Status() == ObjectStatusInitialized {
+		return nil
+	}
+	return c.initObject(NewContext(nil, nil), object)
+}
+
+func (c *ContainerImpl) initObject(ctx *InjectContext, object Object) (err error) {
 	ctx = NewContext(ctx, object)
 	if object.Status() == ObjectStatusInitializing {
 		return newCircularDependencyError(ctx)
 	}
 	object.StartInitialization()
+	defer func() {
+		if err != nil {
+			object.ResetInitialization()
+		}
+	}()
 
 	var args []any
 
@@ -236,6 +250,12 @@ func (c *ContainerImpl) getDependencyObjectInstance(ctx *InjectContext, dep *obj
 	dependencyObject, err := c.objectManager.GetObject(dep.RType(), dep.NameExpr())
 	if err != nil {
 		return nil, err
+	}
+	if dependencyObject == nil && dep.anyName {
+		dependencyObject, err = c.objectManager.GetObject(dep.RType(), "*")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if dependencyObject == nil {

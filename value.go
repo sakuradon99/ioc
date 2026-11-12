@@ -6,6 +6,7 @@ import (
 	ioc "github.com/sakuradon99/ioc/internal"
 	"gopkg.in/yaml.v3"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -38,9 +39,10 @@ func (f *FileValueProvider) Provide() (map[string]any, error) {
 	}
 
 	valueMap := make(map[string]any)
-	if strings.HasSuffix(f.file, ".json") {
+	ext := strings.ToLower(filepath.Ext(f.file))
+	if ext == ".json" {
 		err = json.Unmarshal(content, &valueMap)
-	} else if strings.HasSuffix(f.file, ".yaml") || strings.HasSuffix(f.file, ".yml") {
+	} else if ext == ".yaml" || ext == ".yml" {
 		err = yaml.Unmarshal(content, &valueMap)
 	} else {
 		return nil, errors.New("unsupported file format, only .json, .yaml, and .yml are supported")

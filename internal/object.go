@@ -24,6 +24,7 @@ type Object interface {
 	Instance() any
 	Status() ObjectStatus
 	StartInitialization()
+	ResetInitialization()
 	Build(args []any) error
 	Optional() bool
 }
@@ -99,6 +100,12 @@ func (o *objectImpl) StartInitialization() {
 	o.initializing = true
 }
 
+// ResetInitialization rolls the object back to the default status after a failed initialization,
+// so that a later retry is not mistaken for a circular dependency.
+func (o *objectImpl) ResetInitialization() {
+	o.initializing = false
+}
+
 func (o *objectImpl) Build(args []any) error {
 	instance, err := o.instanceBuilder.Build(args)
 	if err != nil {
@@ -111,8 +118,11 @@ func (o *objectImpl) Build(args []any) error {
 
 	o.instance = instance
 	o.initialized = true
+	o.initializing = false
 	return nil
 }
+
+var errorType = reflect.TypeOf((*error)(nil)).Elem()
 
 type ObjectBuilder interface {
 	Build(rtp reflect.Type, options RegisterOptions) (Object, error)
@@ -128,7 +138,10 @@ func (b *baseObjectBuilder) parseDependencies(rtp reflect.Type, fIndex []int) ([
 	fn = func(rtp reflect.Type, fIndex []int) error {
 		for i := 0; i < rtp.NumField(); i++ {
 			field := rtp.Field(i)
-			fi := append(fIndex, i)
+			// copy to avoid sharing the backing array between sibling fields
+			fi := make([]int, len(fIndex)+1)
+			copy(fi, fIndex)
+			fi[len(fIndex)] = i
 			var dependency Dependency
 			if injectTagExpr, ok := field.Tag.Lookup(TagInjectKey); ok {
 				injectTag := ParseInjectTag(injectTagExpr)
@@ -257,7 +270,7 @@ func (c *constructorObjectBuilder) Build(rtp reflect.Type, options RegisterOptio
 	if ct.Kind() != reflect.Func {
 		return nil, newUnsupportedConstructorError(options.Constructor)
 	}
-	if ct.NumOut() > 2 || ct.NumOut() == 0 || (ct.NumOut() == 2 && ct.Out(1).Name() != "error") {
+	if ct.NumOut() > 2 || ct.NumOut() == 0 || (ct.NumOut() == 2 && ct.Out(1) != errorType) {
 		return nil, newUnsupportedConstructorError(options.Constructor)
 	}
 	if ct.Out(0).Kind() != reflect.Ptr || rtp != ct.Out(0).Elem() {
@@ -273,9 +286,12 @@ func (c *constructorObjectBuilder) Build(rtp reflect.Type, options RegisterOptio
 		var dependency Dependency
 		switch pt.Kind() {
 		case reflect.Ptr:
-			dependency = newObjectDependency("", pt.Elem(), true)
+			if pt.Elem().Kind() != reflect.Struct {
+				return nil, newUnsupportedConstructorParamTypeError(options.Constructor, pt)
+			}
+			dependency = newConstructorParamDependency(pt.Elem())
 		case reflect.Interface:
-			dependency = newObjectDependency("", pt, true)
+			dependency = newConstructorParamDependency(pt)
 		case reflect.Struct:
 			deps, indexes, err := c.parseDependencies(pt, ai)
 			if err != nil {
@@ -337,16 +353,21 @@ type ObjectManager interface {
 }
 
 type objectManagerImpl struct {
-	mu                          sync.Mutex
-	objects                     []Object
-	registeredObjectTypeToName  map[string]map[string]bool
-	interfaceToObjectTypeToImpl map[string]map[string]bool
-	conditionExecutor           ConditionExecutor
+	mu      sync.Mutex
+	objects []Object
+	// keyed by reflect.Type rather than type name: anonymous interfaces and
+	// function-local types may share the same name string.
+	registeredTypeToName map[reflect.Type]map[string]bool
+	// interface type -> object type -> whether the object implements the interface
+	implementsCache   map[reflect.Type]map[reflect.Type]bool
+	conditionExecutor ConditionExecutor
 }
 
 func newObjectManagerImpl(conditionExecutor ConditionExecutor) *objectManagerImpl {
 	return &objectManagerImpl{
-		conditionExecutor: conditionExecutor,
+		registeredTypeToName: make(map[reflect.Type]map[string]bool),
+		implementsCache:      make(map[reflect.Type]map[reflect.Type]bool),
+		conditionExecutor:    conditionExecutor,
 	}
 }
 
@@ -354,16 +375,15 @@ func (p *objectManagerImpl) AddObject(object Object) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.registeredObjectTypeToName[object.FullType()][object.Name()] {
+	names, ok := p.registeredTypeToName[object.RType()]
+	if !ok {
+		names = make(map[string]bool)
+		p.registeredTypeToName[object.RType()] = names
+	}
+	if names[object.Name()] {
 		return newObjectDuplicateRegisterError(object.FullType(), object.Name())
 	}
-	if p.registeredObjectTypeToName == nil {
-		p.registeredObjectTypeToName = make(map[string]map[string]bool)
-	}
-	if _, ok := p.registeredObjectTypeToName[object.FullType()]; !ok {
-		p.registeredObjectTypeToName[object.FullType()] = make(map[string]bool)
-	}
-	p.registeredObjectTypeToName[object.FullType()][object.Name()] = true
+	names[object.Name()] = true
 	p.objects = append(p.objects, object)
 	return nil
 }
@@ -409,31 +429,18 @@ func (p *objectManagerImpl) GetObjects(rtp reflect.Type, nameExpr string) ([]Obj
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	var objects []Object
-	fullType := generateFullType(rtp)
+	if rtp.Kind() != reflect.Struct && rtp.Kind() != reflect.Interface {
+		return nil, newUnsupportedObjectTypeError(rtp)
+	}
 
+	var objects []Object
 	for _, object := range p.objects {
-		switch rtp.Kind() {
-		case reflect.Struct:
+		if rtp.Kind() == reflect.Struct {
 			if object.RType() != rtp {
 				continue
 			}
-		case reflect.Interface:
-			if p.interfaceToObjectTypeToImpl == nil {
-				p.interfaceToObjectTypeToImpl = make(map[string]map[string]bool)
-			}
-			if _, ok := p.interfaceToObjectTypeToImpl[fullType]; !ok {
-				p.interfaceToObjectTypeToImpl[fullType] = make(map[string]bool)
-			}
-			if !p.interfaceToObjectTypeToImpl[fullType][object.FullType()] {
-				if !object.Implements(rtp) {
-					p.interfaceToObjectTypeToImpl[fullType][object.FullType()] = false
-					continue
-				}
-				p.interfaceToObjectTypeToImpl[fullType][object.FullType()] = true
-			}
-		default:
-			return nil, newUnsupportedObjectTypeError(rtp)
+		} else if !p.implements(object, rtp) {
+			continue
 		}
 
 		checked, err := p.checkObjectName(object, nameExpr)
@@ -455,6 +462,20 @@ func (p *objectManagerImpl) GetObjects(rtp reflect.Type, nameExpr string) ([]Obj
 	}
 
 	return objects, nil
+}
+
+func (p *objectManagerImpl) implements(object Object, iface reflect.Type) bool {
+	cache, ok := p.implementsCache[iface]
+	if !ok {
+		cache = make(map[reflect.Type]bool)
+		p.implementsCache[iface] = cache
+	}
+	impl, ok := cache[object.RType()]
+	if !ok {
+		impl = object.Implements(iface)
+		cache[object.RType()] = impl
+	}
+	return impl
 }
 
 func (p *objectManagerImpl) checkObjectCondition(obj Object) (bool, error) {

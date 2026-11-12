@@ -2,6 +2,7 @@ package ioc
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 
 	ioc "github.com/sakuradon99/ioc/internal"
@@ -28,8 +29,7 @@ func GetObject[T any](name string) (*T, error) {
 	if err != nil {
 		return nil, err
 	}
-	ret := obj.(*T)
-	return ret, nil
+	return castTo[*T](obj)
 }
 
 func GetObjectList[T any](name string) ([]*T, error) {
@@ -43,11 +43,7 @@ func GetObjectList[T any](name string) ([]*T, error) {
 		return nil, err
 	}
 
-	ret := make([]*T, len(objs))
-	for i, obj := range objs {
-		ret[i] = obj.(*T)
-	}
-	return ret, nil
+	return castList[*T](objs)
 }
 
 func GetObjectMap[T any](name string) (map[string]*T, error) {
@@ -61,11 +57,7 @@ func GetObjectMap[T any](name string) (map[string]*T, error) {
 		return nil, err
 	}
 
-	ret := make(map[string]*T, len(nameToObject))
-	for k, obj := range nameToObject {
-		ret[k] = obj.(*T)
-	}
-	return ret, nil
+	return castMap[*T](nameToObject)
 }
 
 func GetInterface[T any](name string) (T, error) {
@@ -79,8 +71,7 @@ func GetInterface[T any](name string) (T, error) {
 	if err != nil {
 		return ret, err
 	}
-	ret = obj.(T)
-	return ret, nil
+	return castTo[T](obj)
 }
 
 func GetInterfaceList[T any](name string) ([]T, error) {
@@ -94,11 +85,7 @@ func GetInterfaceList[T any](name string) ([]T, error) {
 		return nil, err
 	}
 
-	ret := make([]T, len(objs))
-	for i, obj := range objs {
-		ret[i] = obj.(T)
-	}
-	return ret, nil
+	return castList[T](objs)
 }
 
 func GetInterfaceMap[T any](name string) (map[string]T, error) {
@@ -111,11 +98,7 @@ func GetInterfaceMap[T any](name string) (map[string]T, error) {
 		return nil, err
 	}
 
-	ret := make(map[string]T, len(objs))
-	for k, obj := range objs {
-		ret[k] = obj.(T)
-	}
-	return ret, nil
+	return castMap[T](objs)
 }
 
 func AddValueProvider(provider ValueProvider) error {
@@ -137,7 +120,48 @@ func GetValue[T any](key string) (T, bool, error) {
 		return defaultVal, false, nil
 	}
 
-	return val.(T), ok, nil
+	ret, err := castTo[T](val)
+	if err != nil {
+		return defaultVal, false, err
+	}
+	return ret, true, nil
+}
+
+// castTo converts the value returned by the container to T, returning an error instead of panicking.
+func castTo[T any](v any) (T, error) {
+	var zero T
+	if v == nil {
+		return zero, nil
+	}
+	ret, ok := v.(T)
+	if !ok {
+		return zero, fmt.Errorf("unexpected type <%T>, want <%s>", v, getRefType[T]())
+	}
+	return ret, nil
+}
+
+func castList[T any](objs []any) ([]T, error) {
+	ret := make([]T, len(objs))
+	for i, obj := range objs {
+		v, err := castTo[T](obj)
+		if err != nil {
+			return nil, err
+		}
+		ret[i] = v
+	}
+	return ret, nil
+}
+
+func castMap[T any](objs map[string]any) (map[string]T, error) {
+	ret := make(map[string]T, len(objs))
+	for k, obj := range objs {
+		v, err := castTo[T](obj)
+		if err != nil {
+			return nil, err
+		}
+		ret[k] = v
+	}
+	return ret, nil
 }
 
 func PrintErrorInjectionStack(err error) string {

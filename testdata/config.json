@@ -1,0 +1,6 @@
+{
+  "app": {
+    "name": "json-app",
+    "port": 8080
+  }
+}

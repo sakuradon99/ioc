@@ -48,6 +48,8 @@ func Optional() ioc.RegisterOption {
 // Example: `Constructor(func() *MyService { return &MyService{} })`
 // The type of dependencies can only be pointer, interface or struct.
 // If the dependency is pointer or interface, it will be injected automatically by the IOC container.
+// Such a dependency is required: the object registered without a name is preferred,
+// otherwise the only object of that type (with any name) is used. A missing or ambiguous dependency is an error.
 // If the dependency is a struct, the container will create a new instance of the struct and inject its fields.
 func Constructor(constructor any) ioc.RegisterOption {
 	return func(o *ioc.RegisterOptions) {
