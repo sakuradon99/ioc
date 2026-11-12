@@ -1,8 +1,10 @@
 package ioc
 
 import (
+	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,8 +14,6 @@ import (
 
 func typeOf[T any]() reflect.Type { return reflect.TypeOf(new(T)).Elem() }
 
-func withName(name string) RegisterOption { return func(o *RegisterOptions) { o.Name = name } }
-func withOptional() RegisterOption        { return func(o *RegisterOptions) { o.Optional = true } }
 func withConstructor(c any) RegisterOption {
 	return func(o *RegisterOptions) { o.Constructor = c }
 }
@@ -21,6 +21,24 @@ func withConstructor(c any) RegisterOption {
 type mapProvider map[string]any
 
 func (m mapProvider) Provide() (map[string]any, error) { return m, nil }
+
+// newStartedContainer registers the given types, starts the container and fails the test on error.
+func newStartedContainer(t *testing.T, provider ValueProvider, types ...reflect.Type) *ContainerImpl {
+	t.Helper()
+	c := NewContainerImpl()
+	if provider != nil {
+		require.NoError(t, c.AddValueProvider(provider))
+	}
+	for _, rtp := range types {
+		require.NoError(t, c.Register(rtp))
+	}
+	require.NoError(t, c.Start(context.Background()))
+	return c
+}
+
+// ---------------------------------------------------------------------------
+// Regression tests
+// ---------------------------------------------------------------------------
 
 type flaky struct{}
 
@@ -39,27 +57,8 @@ func TestFailedInitCanBeRetried(t *testing.T) {
 	c := NewContainerImpl()
 	require.NoError(t, c.Register(typeOf[flaky]()))
 
-	_, err := c.GetObject("", typeOf[flaky]())
-	assert.EqualError(t, err, "transient")
-
-	obj, err := c.GetObject("", typeOf[flaky]())
-	require.NoError(t, err, "retry must not be reported as circular dependency")
-	assert.NotNil(t, obj)
-}
-
-type optObj struct{}
-
-func TestGetOptionalObjectDirectly(t *testing.T) {
-	c := NewContainerImpl()
-	require.NoError(t, c.Register(typeOf[optObj](), withOptional()))
-
-	obj, err := c.GetObject("", typeOf[optObj]())
-	require.NoError(t, err)
-	assert.IsType(t, &optObj{}, obj)
-
-	list, err := c.GetObjectList("", typeOf[optObj]())
-	require.NoError(t, err)
-	assert.NotNil(t, list[0])
+	assert.ErrorContains(t, c.Start(context.Background()), "transient")
+	require.NoError(t, c.Start(context.Background()), "retry must not be reported as circular dependency")
 }
 
 type depObj struct{}
@@ -71,40 +70,8 @@ func TestConstructorMissingDependencyReturnsError(t *testing.T) {
 		withConstructor(func(d *depObj) *ctorObj { return &ctorObj{d} })))
 
 	assert.NotPanics(t, func() {
-		_, err := c.GetObject("", typeOf[ctorObj]())
-		assert.Error(t, err)
+		assert.Error(t, c.Start(context.Background()))
 	})
-}
-
-func TestConstructorInjectsNamedDependency(t *testing.T) {
-	c := NewContainerImpl()
-	require.NoError(t, c.Register(typeOf[depObj](), withName("dep")))
-	require.NoError(t, c.Register(typeOf[ctorObj](),
-		withConstructor(func(d *depObj) *ctorObj { return &ctorObj{d} })))
-
-	obj, err := c.GetObject("", typeOf[ctorObj]())
-	require.NoError(t, err)
-	assert.NotNil(t, obj.(*ctorObj).d)
-}
-
-func TestConstructorPrefersUnnamedDependency(t *testing.T) {
-	c := NewContainerImpl()
-	require.NoError(t, c.Register(typeOf[depObj](), withName("other")))
-	require.NoError(t, c.Register(typeOf[depObj]()))
-	require.NoError(t, c.Register(typeOf[ctorObj](),
-		withConstructor(func(d *depObj) *ctorObj { return &ctorObj{d} })))
-
-	_, err := c.GetObject("", typeOf[ctorObj]())
-	require.NoError(t, err)
-}
-
-func TestConstructorReturnsNil(t *testing.T) {
-	c := NewContainerImpl()
-	require.NoError(t, c.Register(typeOf[ctorObj](),
-		withConstructor(func() (*ctorObj, error) { return nil, nil })))
-
-	_, err := c.GetObject("", typeOf[ctorObj]())
-	assert.Error(t, err)
 }
 
 type notErr struct{}
@@ -129,67 +96,18 @@ type level1 struct{ L level2 }
 type deepRoot struct{ L level1 }
 
 func TestDeeplyNestedInjectFields(t *testing.T) {
-	c := NewContainerImpl()
-	require.NoError(t, c.Register(typeOf[leafA]()))
-	require.NoError(t, c.Register(typeOf[leafB]()))
-	require.NoError(t, c.Register(typeOf[deepRoot]()))
+	c := newStartedContainer(t, nil, typeOf[leafA](), typeOf[leafB](), typeOf[deepRoot]())
 
 	obj, err := c.GetObject("", typeOf[deepRoot]())
 	require.NoError(t, err)
 	r := obj.(*deepRoot)
 	assert.NotNil(t, r.L.L.L.A)
 	assert.NotNil(t, r.L.L.L.B)
-}
 
-type reentrant struct{ peer *leafA }
-
-var reentrantContainer *ContainerImpl
-
-func (r *reentrant) Init() error {
-	if _, _, err := reentrantContainer.GetValue("k", typeOf[string]()); err != nil {
-		return err
-	}
-	obj, err := reentrantContainer.GetObject("", typeOf[leafA]())
-	if err != nil {
-		return err
-	}
-	r.peer = obj.(*leafA)
-	return nil
-}
-
-func TestInitCanCallContainer(t *testing.T) {
-	reentrantContainer = NewContainerImpl()
-	reentrantContainer.AddValueProvider(mapProvider{"k": "v"})
-	require.NoError(t, reentrantContainer.Register(typeOf[reentrant]()))
-	require.NoError(t, reentrantContainer.Register(typeOf[leafA]()))
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := reentrantContainer.GetObject("", typeOf[reentrant]())
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(3 * time.Second):
-		t.Fatal("deadlock: Init() calling the container blocked")
-	}
-}
-
-func TestLateValueProvider(t *testing.T) {
-	c := NewContainerImpl()
-	c.AddValueProvider(mapProvider{"a": "1"})
-	_, _, err := c.GetValue("a", typeOf[string]())
-	require.NoError(t, err)
-
-	c.AddValueProvider(mapProvider{"a": "override", "b": "2"})
-	v, ok, err := c.GetValue("b", typeOf[string]())
-	require.NoError(t, err)
-	assert.True(t, ok)
-	assert.Equal(t, "2", v)
-
-	v, _, _ = c.GetValue("a", typeOf[string]())
-	assert.Equal(t, "override", v, "later provider has higher priority")
+	deps := c.objectManager.AllObjects()[2].Dependencies()
+	require.Len(t, deps, 2)
+	assert.Equal(t, "field L.L.L.A", deps[0].Location())
+	assert.Equal(t, "field L.L.L.B", deps[1].Location())
 }
 
 type level int
@@ -210,15 +128,13 @@ type nestedCfg struct {
 }
 
 func TestValueConversion(t *testing.T) {
-	c := NewContainerImpl()
-	c.AddValueProvider(mapProvider{
+	c := newStartedContainer(t, mapProvider{
 		"lvl":     3,
 		"timeout": "5s",
 		"labels":  map[string]any{"a": 1, "b": "2"},
 		"names":   []string{"x", "y"},
 		"nested":  map[string]any{"opt": "o", "port": 8080},
-	})
-	require.NoError(t, c.Register(typeOf[valueCfg]()))
+	}, typeOf[valueCfg]())
 
 	obj, err := c.GetObject("", typeOf[valueCfg]())
 	require.NoError(t, err)
@@ -233,8 +149,7 @@ func TestValueConversion(t *testing.T) {
 }
 
 func TestValueConversionErrors(t *testing.T) {
-	c := NewContainerImpl()
-	c.AddValueProvider(mapProvider{"s": "str", "f": 1.5, "big": 300, "fn": func() {}})
+	c := newStartedContainer(t, mapProvider{"s": "str", "f": 1.5, "big": 300})
 
 	cases := []struct {
 		key string
@@ -245,7 +160,7 @@ func TestValueConversionErrors(t *testing.T) {
 		{"s", typeOf[nestedCfg]()},
 		{"f", typeOf[int]()},
 		{"big", typeOf[uint8]()},
-		{"fn", typeOf[chan int]()},
+		{"s", typeOf[chan int]()},
 	}
 	for _, tc := range cases {
 		v, ok, err := c.GetValue(tc.key, tc.rtp)
@@ -267,10 +182,7 @@ type needsFoo struct {
 }
 
 func TestAnonymousInterfacesDoNotCollide(t *testing.T) {
-	c := NewContainerImpl()
-	require.NoError(t, c.Register(typeOf[fooImpl]()))
-	require.NoError(t, c.Register(typeOf[needsFoo]()))
-	require.NoError(t, c.Register(typeOf[needsBar]()))
+	c := newStartedContainer(t, nil, typeOf[fooImpl](), typeOf[needsFoo](), typeOf[needsBar]())
 
 	obj, err := c.GetObject("", typeOf[needsBar]())
 	require.NoError(t, err)
@@ -287,4 +199,82 @@ func TestLocalTypesWithSameName(t *testing.T) {
 		type local struct{}
 		require.NoError(t, c.Register(typeOf[local]()), "distinct types must not be duplicates")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Concurrency
+// ---------------------------------------------------------------------------
+
+type concurrentObj struct {
+	dep *depObj `inject:""`
+}
+
+func TestConcurrentGet(t *testing.T) {
+	c := newStartedContainer(t, mapProvider{"k": "v"}, typeOf[depObj](), typeOf[concurrentObj]())
+
+	var wg sync.WaitGroup
+	results := make([]any, 50)
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			obj, err := c.GetObject("", typeOf[concurrentObj]())
+			assert.NoError(t, err)
+			_, _, err = c.GetValue("k", typeOf[string]())
+			assert.NoError(t, err)
+			_, err = c.GetObjectList("", typeOf[depObj]())
+			assert.NoError(t, err)
+			results[i] = obj
+		}(i)
+	}
+	wg.Wait()
+
+	for _, r := range results[1:] {
+		assert.Same(t, results[0], r, "singleton must be created once")
+	}
+}
+
+func TestConcurrentStart(t *testing.T) {
+	c := NewContainerImpl()
+	require.NoError(t, c.Register(typeOf[depObj]()))
+
+	var wg sync.WaitGroup
+	errs := make([]error, 10)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = c.Start(context.Background())
+		}(i)
+	}
+	wg.Wait()
+
+	var succeeded int
+	for _, err := range errs {
+		if err == nil {
+			succeeded++
+		} else {
+			// depending on timing, the others see the container starting or started
+			assert.True(t, errors.Is(err, ErrStarting) || errors.Is(err, ErrAlreadyStarted), "unexpected error: %v", err)
+		}
+	}
+	assert.Equal(t, 1, succeeded)
+}
+
+func TestShutdownWhileGetting(t *testing.T) {
+	c := newStartedContainer(t, nil, typeOf[depObj]())
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := c.GetObject("", typeOf[depObj]())
+			if err != nil {
+				assert.ErrorIs(t, err, ErrShutdown)
+			}
+		}()
+	}
+	require.NoError(t, c.Shutdown(context.Background()))
+	wg.Wait()
 }

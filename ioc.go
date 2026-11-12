@@ -1,6 +1,7 @@
 package ioc
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -10,6 +11,31 @@ import (
 
 var iocContainer ioc.Container = ioc.NewContainerImpl()
 
+var (
+	// ErrNotStarted is returned when getting objects or values before Start.
+	ErrNotStarted = ioc.ErrNotStarted
+	// ErrStarting is returned when calling the container during Start, e.g. from Init.
+	ErrStarting = ioc.ErrStarting
+	// ErrAlreadyStarted is returned when registering objects or value providers after Start.
+	ErrAlreadyStarted = ioc.ErrAlreadyStarted
+	// ErrShutdown is returned when using the container after Shutdown.
+	ErrShutdown = ioc.ErrShutdown
+)
+
+// Lifecycle hooks. An object may implement either variant of Init and Destroy.
+type (
+	// Initializer is called after the object is created and injected, during Start.
+	Initializer = ioc.Initializer
+	// ContextInitializer is like Initializer, receiving the context passed to Start.
+	ContextInitializer = ioc.ContextInitializer
+	// Destroyer is called on Shutdown, in reverse initialization order.
+	Destroyer = ioc.Destroyer
+	// ContextDestroyer is like Destroyer, receiving the context passed to Shutdown.
+	ContextDestroyer = ioc.ContextDestroyer
+)
+
+// Register registers the struct type T. It panics on invalid registration or after Start.
+// It returns nil so that it can be called at package level: `var _ = ioc.Register[MyService]()`.
 func Register[T any](opts ...RegisterOption) any {
 	err := iocContainer.Register(getRefType[T](), opts...)
 	if err != nil {
@@ -17,6 +43,51 @@ func Register[T any](opts ...RegisterOption) any {
 	}
 
 	return nil
+}
+
+// Provide registers an existing instance. It panics on invalid instance or after Start.
+//
+// The instance is registered by its dynamic type, even if it is passed as an interface:
+// a pointer to struct is registered as the struct type, so it can be injected into `*T` fields
+// and the interfaces it implements; other types (e.g. func types) can only be injected through interfaces.
+// Its fields are not injected, and the container doesn't call its Init and Destroy.
+func Provide(instance any, opts ...RegisterOption) any {
+	err := iocContainer.Provide(instance, opts...)
+	if err != nil {
+		panic(err)
+	}
+
+	return nil
+}
+
+// AddValueProvider adds a value provider. The last added provider has the highest priority.
+// It must be called before Start.
+func AddValueProvider(provider ValueProvider) error {
+	if provider == nil {
+		return errors.New("provider cannot be nil")
+	}
+
+	return iocContainer.AddValueProvider(provider)
+}
+
+// Start loads the value providers, evaluates the conditions, and initializes all non-optional objects.
+// Optional objects are only initialized when depended on.
+// It must be called before getting objects or values, and ctx is passed to the Init hooks.
+// After Start, no more objects or value providers can be registered.
+// If Start fails, the problems can be fixed and Start can be called again.
+func Start(ctx context.Context) error {
+	return iocContainer.Start(ctx)
+}
+
+// Shutdown calls the Destroy hooks of the initialized objects in reverse initialization order,
+// and returns all the errors joined. The container can't be used after Shutdown.
+func Shutdown(ctx context.Context) error {
+	return iocContainer.Shutdown(ctx)
+}
+
+// Dump describes the registered objects and their dependencies, for debugging.
+func Dump() string {
+	return iocContainer.Dump()
 }
 
 func GetObject[T any](name string) (*T, error) {
@@ -64,7 +135,7 @@ func GetInterface[T any](name string) (T, error) {
 	var ret T
 	rtp := getRefType[T]()
 	if rtp.Kind() != reflect.Interface {
-		return ret, errors.New("ref is not a interface")
+		return ret, errors.New("ref is not an interface")
 	}
 
 	obj, err := iocContainer.GetObject(name, rtp)
@@ -77,7 +148,7 @@ func GetInterface[T any](name string) (T, error) {
 func GetInterfaceList[T any](name string) ([]T, error) {
 	rtp := getRefType[T]()
 	if rtp.Kind() != reflect.Interface {
-		return nil, errors.New("ref is not a interface")
+		return nil, errors.New("ref is not an interface")
 	}
 
 	objs, err := iocContainer.GetObjectList(name, rtp)
@@ -91,7 +162,7 @@ func GetInterfaceList[T any](name string) ([]T, error) {
 func GetInterfaceMap[T any](name string) (map[string]T, error) {
 	rtp := getRefType[T]()
 	if rtp.Kind() != reflect.Interface {
-		return nil, errors.New("ref is not a interface")
+		return nil, errors.New("ref is not an interface")
 	}
 	objs, err := iocContainer.GetObjectMap(name, rtp)
 	if err != nil {
@@ -101,15 +172,7 @@ func GetInterfaceMap[T any](name string) (map[string]T, error) {
 	return castMap[T](objs)
 }
 
-func AddValueProvider(provider ValueProvider) error {
-	if provider == nil {
-		return errors.New("provider cannot be nil")
-	}
-
-	iocContainer.AddValueProvider(provider)
-	return nil
-}
-
+// GetValue gets a value from the value providers. It must be called after Start.
 func GetValue[T any](key string) (T, bool, error) {
 	var defaultVal T
 	val, ok, err := iocContainer.GetValue(key, getRefType[T]())
@@ -125,6 +188,29 @@ func GetValue[T any](key string) (T, bool, error) {
 		return defaultVal, false, err
 	}
 	return ret, true, nil
+}
+
+// ErrorInjectionStack returns the injection stack of an error returned by Start, e.g.
+//
+//	** main.App@""
+//	-> main.UserService@""
+//	-> main.UserRepo@""
+//
+// It returns an empty string if err doesn't carry an injection stack.
+func ErrorInjectionStack(err error) string {
+	var injectionStack ioc.InjectionStack
+	if !errors.As(err, &injectionStack) {
+		return ""
+	}
+
+	return injectionStack.Stack()
+}
+
+// PrintErrorInjectionStack returns the injection stack of err.
+//
+// Deprecated: it doesn't print anything, use ErrorInjectionStack instead.
+func PrintErrorInjectionStack(err error) string {
+	return ErrorInjectionStack(err)
 }
 
 // castTo converts the value returned by the container to T, returning an error instead of panicking.
@@ -162,17 +248,4 @@ func castMap[T any](objs map[string]any) (map[string]T, error) {
 		ret[k] = v
 	}
 	return ret, nil
-}
-
-func PrintErrorInjectionStack(err error) string {
-	if err == nil {
-		return ""
-	}
-
-	injectionStack, ok := err.(ioc.InjectionStack)
-	if !ok {
-		return ""
-	}
-
-	return injectionStack.Stack()
 }

@@ -1,6 +1,7 @@
 package ioc
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -18,6 +19,12 @@ func newTestContainer(t *testing.T) {
 	previous := iocContainer
 	iocContainer = ioc.NewContainerImpl()
 	t.Cleanup(func() { iocContainer = previous })
+}
+
+// startContainer starts the global container and shuts it down at the end of the test.
+func startContainer(t *testing.T) {
+	t.Helper()
+	require.NoError(t, Start(context.Background()))
 }
 
 // newTestContainerWithConfig creates a fresh container and loads testdata/config.yaml into it.
@@ -213,6 +220,14 @@ type failingInit struct{}
 
 func (f *failingInit) Init() error { return errors.New("init failed") }
 
+type failingInitUser struct {
+	dep *failingInit `inject:""`
+}
+
+type requiredObjectDependencyUser struct {
+	dep *requiredObjectDependency `inject:""`
+}
+
 type mapValueTarget struct {
 	first       string `value:"key1"`
 	second      string `value:"key2"`
@@ -239,6 +254,7 @@ func TestValueInjection(t *testing.T) {
 	newTestContainerWithConfig(t)
 	Register[valueHolder]()
 
+	startContainer(t)
 	holder, err := GetObject[valueHolder]("")
 	require.NoError(t, err)
 
@@ -273,6 +289,7 @@ func TestTypedValueInjection(t *testing.T) {
 	})))
 	Register[typedValues]()
 
+	startContainer(t)
 	values, err := GetObject[typedValues]("")
 	require.NoError(t, err)
 
@@ -293,6 +310,7 @@ func TestMapValueProvider(t *testing.T) {
 	})))
 	Register[mapValueTarget]()
 
+	startContainer(t)
 	target, err := GetObject[mapValueTarget]("")
 	require.NoError(t, err)
 
@@ -326,6 +344,7 @@ func TestFileValueProvider(t *testing.T) {
 
 			newTestContainer(t)
 			require.NoError(t, AddValueProvider(NewMapValueProvider(values)))
+			startContainer(t)
 			got, ok, err := GetValue[string](tt.key)
 			require.NoError(t, err)
 			assert.True(t, ok)
@@ -337,17 +356,12 @@ func TestFileValueProvider(t *testing.T) {
 func TestValueProviderPriority(t *testing.T) {
 	newTestContainer(t)
 	require.NoError(t, AddValueProvider(NewMapValueProvider(map[string]any{"name": "first", "only_first": "x"})))
+	require.NoError(t, AddValueProvider(NewMapValueProvider(map[string]any{"name": "second"})))
+	startContainer(t)
 
 	name, _, err := GetValue[string]("name")
 	require.NoError(t, err)
-	assert.Equal(t, "first", name)
-
-	// providers added after the first read are still loaded, and the last added one wins
-	require.NoError(t, AddValueProvider(NewMapValueProvider(map[string]any{"name": "second"})))
-
-	name, _, err = GetValue[string]("name")
-	require.NoError(t, err)
-	assert.Equal(t, "second", name)
+	assert.Equal(t, "second", name, "the last added provider wins")
 
 	onlyFirst, ok, err := GetValue[string]("only_first")
 	require.NoError(t, err)
@@ -366,6 +380,7 @@ func TestGetValue(t *testing.T) {
 		"timeout": "5s",
 		"section": map[string]any{"port": 80},
 	})))
+	startContainer(t)
 
 	t.Run("string", func(t *testing.T) {
 		v, ok, err := GetValue[string]("str")
@@ -440,6 +455,7 @@ func TestObjectInjection(t *testing.T) {
 	Register[anotherHolderRef]()
 	Register[nestedInjection]()
 
+	startContainer(t)
 	obj, err := GetObject[nestedInjection]("")
 	require.NoError(t, err)
 
@@ -456,6 +472,7 @@ func TestInterfaceInjection(t *testing.T) {
 	Register[pluginTwo](Name("plugin2"))
 	Register[interfaceConsumer]()
 
+	startContainer(t)
 	consumer, err := GetObject[interfaceConsumer]("")
 	require.NoError(t, err)
 
@@ -471,6 +488,7 @@ func TestAliasInjection(t *testing.T) {
 	Register[englishGreeter](Alias("greeterAlias"))
 	Register[aliasConsumer]()
 
+	startContainer(t)
 	consumer, err := GetObject[aliasConsumer]("")
 	require.NoError(t, err)
 	require.NotNil(t, consumer.greeter)
@@ -481,6 +499,7 @@ func TestOptionalInjection(t *testing.T) {
 	newTestContainer(t)
 	Register[optionalDependency]()
 
+	startContainer(t)
 	obj, err := GetObject[optionalDependency]("")
 	require.NoError(t, err)
 	assert.Nil(t, obj.greeter)
@@ -496,6 +515,7 @@ func TestConstructorInjection(t *testing.T) {
 	Register[pluginTwo](Name("plugin2"))
 	Register[interfaceConsumer](Constructor(newInterfaceConsumer))
 
+	startContainer(t)
 	consumer, err := GetObject[interfaceConsumer]("")
 	require.NoError(t, err)
 
@@ -514,6 +534,7 @@ func TestConstructorDependencyResolution(t *testing.T) {
 		newTestContainerWithConfig(t)
 		Register[valueHolder](Name("main"))
 		Register[holderRef](Constructor(newHolderRef))
+		startContainer(t)
 
 		ref, err := GetObject[holderRef]("")
 		require.NoError(t, err)
@@ -525,6 +546,7 @@ func TestConstructorDependencyResolution(t *testing.T) {
 		Register[valueHolder](Name("other"))
 		Register[valueHolder]()
 		Register[holderRef](Constructor(newHolderRef))
+		startContainer(t)
 
 		ref, err := GetObject[holderRef]("")
 		require.NoError(t, err)
@@ -540,32 +562,33 @@ func TestConstructorDependencyResolution(t *testing.T) {
 		Register[valueHolder](Name("b"))
 		Register[holderRef](Constructor(newHolderRef))
 
-		_, err := GetObject[holderRef]("")
-		assert.ErrorContains(t, err, "multiple objects found")
+		assert.ErrorContains(t, Start(context.Background()),
+			`<github.com/sakuradon99/ioc.holderRef@""> constructor param #0: multiple objects found`)
 	})
 
 	t.Run("missing dependency", func(t *testing.T) {
 		newTestContainer(t)
 		Register[holderRef](Constructor(newHolderRef))
 
-		_, err := GetObject[holderRef]("")
-		assert.ErrorContains(t, err, "missing object")
+		assert.EqualError(t, Start(context.Background()),
+			`<github.com/sakuradon99/ioc.holderRef@""> constructor param #0: missing object <github.com/sakuradon99/ioc.valueHolder@"">`)
 	})
 
 	t.Run("constructor error", func(t *testing.T) {
 		newTestContainer(t)
-		Register[holderRef](Constructor(func() (*holderRef, error) { return nil, errors.New("boom") }))
+		boom := errors.New("boom")
+		Register[holderRef](Constructor(func() (*holderRef, error) { return nil, boom }))
 
-		_, err := GetObject[holderRef]("")
-		assert.EqualError(t, err, "boom")
+		err := Start(context.Background())
+		assert.ErrorIs(t, err, boom)
+		assert.EqualError(t, err, `<github.com/sakuradon99/ioc.holderRef@""> constructor: boom`)
 	})
 
 	t.Run("constructor returns nil", func(t *testing.T) {
 		newTestContainer(t)
 		Register[holderRef](Constructor(func() *holderRef { return nil }))
 
-		_, err := GetObject[holderRef]("")
-		assert.ErrorContains(t, err, "returned nil object")
+		assert.ErrorContains(t, Start(context.Background()), "returned nil object")
 	})
 }
 
@@ -575,6 +598,7 @@ func TestConditionalRegistration(t *testing.T) {
 	Register[pluginTwo](Conditional("#condition.use_impl_multi == 2"))
 	Register[singlePlugin]()
 
+	startContainer(t)
 	obj, err := GetObject[singlePlugin]("")
 	require.NoError(t, err)
 	assert.Equal(t, "plugin2", obj.plugin.ID())
@@ -591,6 +615,7 @@ func TestListInjection(t *testing.T) {
 		Register[pluginTwo]()
 		Register[optionalPluginList]()
 
+		startContainer(t)
 		obj, err := GetObject[optionalPluginList]("")
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []string{"plugin1", "plugin2"}, pluginIDs(obj.plugins))
@@ -600,6 +625,7 @@ func TestListInjection(t *testing.T) {
 		newTestContainer(t)
 		Register[optionalPluginList]()
 
+		startContainer(t)
 		obj, err := GetObject[optionalPluginList]("")
 		require.NoError(t, err)
 		assert.Empty(t, obj.plugins)
@@ -612,6 +638,7 @@ func TestListInjection(t *testing.T) {
 		Register[valueHolder](Name("holder3"))
 		Register[holderList]()
 
+		startContainer(t)
 		obj, err := GetObject[holderList]("")
 		require.NoError(t, err)
 		require.Len(t, obj.holders, 2)
@@ -625,6 +652,7 @@ func TestListInjection(t *testing.T) {
 		Register[pluginTwo](Name("plugin2"))
 		Register[filteredPluginList]()
 
+		startContainer(t)
 		obj, err := GetObject[filteredPluginList]("")
 		require.NoError(t, err)
 		assert.Equal(t, []string{"plugin2"}, pluginIDs(obj.plugins))
@@ -637,6 +665,7 @@ func TestMapInjection(t *testing.T) {
 	Register[pluginTwo](Name("plugin2"))
 	Register[pluginMap]()
 
+	startContainer(t)
 	obj, err := GetObject[pluginMap]("")
 	require.NoError(t, err)
 	require.Len(t, obj.plugins, 2)
@@ -653,6 +682,7 @@ func TestGetObjectAPIs(t *testing.T) {
 	Register[valueHolder](Name("holder1"))
 	Register[valueHolder](Name("holder2"))
 	Register[valueHolder](Name("holder3"))
+	startContainer(t)
 
 	t.Run("object by name", func(t *testing.T) {
 		obj, err := GetObject[valueHolder]("holder2")
@@ -679,9 +709,14 @@ func TestGetObjectAPIs(t *testing.T) {
 		assert.ErrorContains(t, err, "multiple objects found")
 	})
 
+	t.Run("empty name with only named objects is ambiguous", func(t *testing.T) {
+		_, err := GetObject[valueHolder]("")
+		assert.ErrorContains(t, err, "multiple objects found")
+	})
+
 	t.Run("no match", func(t *testing.T) {
 		_, err := GetObject[valueHolder]("nobody")
-		assert.ErrorContains(t, err, "missing object")
+		assert.EqualError(t, err, `missing object <github.com/sakuradon99/ioc.valueHolder@"nobody">`)
 
 		_, err = GetObjectList[valueHolder]("nobody")
 		assert.ErrorContains(t, err, "missing object")
@@ -696,6 +731,7 @@ func TestGetInterfaceAPIs(t *testing.T) {
 	Register[pluginOne](Name("plugin1"))
 	Register[pluginTwo](Name("plugin2"))
 	Register[pluginTwo](Name("plugin2-copy"))
+	startContainer(t)
 
 	t.Run("interface by name", func(t *testing.T) {
 		for name, want := range map[string]string{"plugin1": "plugin1", "plugin2": "plugin2"} {
@@ -723,19 +759,11 @@ func TestGetInterfaceAPIs(t *testing.T) {
 		_, err := GetInterface[Plugin]("*")
 		assert.ErrorContains(t, err, "multiple implementations found")
 	})
-}
 
-func TestGetOptionalObjectDirectly(t *testing.T) {
-	newTestContainerWithConfig(t)
-	Register[valueHolder](Optional())
-
-	var (
-		holder *valueHolder
-		err    error
-	)
-	require.NotPanics(t, func() { holder, err = GetObject[valueHolder]("") })
-	require.NoError(t, err)
-	assert.Equal(t, "str", holder.text, "optional object is initialized on demand")
+	t.Run("missing implementation", func(t *testing.T) {
+		_, err := GetInterface[Greeter]("")
+		assert.EqualError(t, err, `missing implementation of <github.com/sakuradon99/ioc.Greeter@"">`)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -747,6 +775,7 @@ func TestInitHook(t *testing.T) {
 	Register[valueHolder]()
 	Register[initHook]()
 
+	startContainer(t)
 	hook, err := GetObject[initHook]("")
 	require.NoError(t, err)
 	assert.Equal(t, "init", hook.holder.text)
@@ -758,8 +787,8 @@ func TestInitError(t *testing.T) {
 	Register[failingInit]()
 
 	for i := 0; i < 2; i++ {
-		_, err := GetObject[failingInit]("")
-		assert.EqualError(t, err, "init failed", "attempt %d must not report a circular dependency", i+1)
+		assert.EqualError(t, Start(context.Background()), `<github.com/sakuradon99/ioc.failingInit@""> init: init failed`,
+			"attempt %d must not report a circular dependency", i+1)
 	}
 }
 
@@ -771,81 +800,111 @@ func TestRegisterErrors(t *testing.T) {
 	t.Run("duplicate registration", func(t *testing.T) {
 		newTestContainer(t)
 		Register[englishGreeter](Name("dup"))
-		assert.PanicsWithError(t, `object <github.com/sakuradon99/ioc.englishGreeter@"dup"> already duplicate register`, func() {
+		assert.PanicsWithError(t, `object <github.com/sakuradon99/ioc.englishGreeter@"dup"> is already registered`, func() {
 			Register[englishGreeter](Name("dup"))
 		})
 	})
 
 	t.Run("non struct type", func(t *testing.T) {
 		newTestContainer(t)
-		assert.Panics(t, func() { Register[int]() })
+		assert.PanicsWithError(t, "unsupported register type <int>, only struct is allowed", func() { Register[int]() })
 	})
 
 	t.Run("unsupported inject field type", func(t *testing.T) {
 		newTestContainer(t)
-		assert.PanicsWithError(t, "unsupported inject field type [int]", func() {
+		assert.PanicsWithError(t, "unsupported inject field type [int] of field count", func() {
 			Register[unsupportedInjectField]()
 		})
 	})
 
 	t.Run("constructor returning another type", func(t *testing.T) {
 		newTestContainer(t)
-		assert.Panics(t, func() {
+		assert.PanicsWithError(t, "constructor <func() *ioc.englishGreeter> does not return <*ioc.holderRef>", func() {
 			Register[holderRef](Constructor(func() *englishGreeter { return nil }))
 		})
 	})
 
 	t.Run("constructor is not a function", func(t *testing.T) {
 		newTestContainer(t)
-		assert.Panics(t, func() { Register[holderRef](Constructor(42)) })
+		assert.PanicsWithError(t, "unsupported constructor <int>, want func(...) *T or func(...) (*T, error)", func() {
+			Register[holderRef](Constructor(42))
+		})
 	})
 }
 
 func TestResolveErrors(t *testing.T) {
-	t.Run("missing implementation", func(t *testing.T) {
+	tests := []struct {
+		name     string
+		register func()
+		wantErr  string
+	}{
+		{
+			name:     "missing implementation",
+			register: func() { Register[requiredDependency]() },
+			wantErr:  `<github.com/sakuradon99/ioc.requiredDependency@""> field greeter: missing implementation of <github.com/sakuradon99/ioc.Greeter@"">`,
+		},
+		{
+			name:     "missing object",
+			register: func() { Register[requiredObjectDependency]() },
+			wantErr:  `<github.com/sakuradon99/ioc.requiredObjectDependency@""> field holder: missing object <github.com/sakuradon99/ioc.valueHolder@"">`,
+		},
+		{
+			name:     "missing required value",
+			register: func() { Register[mapValueTarget]() },
+			wantErr:  `<github.com/sakuradon99/ioc.mapValueTarget@""> field first: missing value <key1>`,
+		},
+		{
+			name:     "field of nested struct",
+			register: func() { Register[nestedInjection]() },
+			wantErr:  `<github.com/sakuradon99/ioc.nestedInjection@""> field ref: missing object <github.com/sakuradon99/ioc.holderRef@"">`,
+		},
+		{
+			name:     "condition not returning bool",
+			register: func() { Register[pluginOne](Conditional("1 + 1")) },
+			wantErr:  `evaluate condition of <github.com/sakuradon99/ioc.pluginOne@"">: condition <1 + 1> does not return a bool`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newTestContainer(t)
+			tt.register()
+			assert.EqualError(t, Start(context.Background()), tt.wantErr)
+		})
+	}
+
+	t.Run("all failures are reported", func(t *testing.T) {
 		newTestContainer(t)
 		Register[requiredDependency]()
-
-		_, err := GetObject[requiredDependency]("")
-		assert.ErrorContains(t, err, "missing implementation")
-	})
-
-	t.Run("missing object", func(t *testing.T) {
-		newTestContainer(t)
 		Register[requiredObjectDependency]()
 
-		_, err := GetObject[requiredObjectDependency]("")
+		err := Start(context.Background())
+		assert.ErrorContains(t, err, "missing implementation")
 		assert.ErrorContains(t, err, "missing object")
 	})
 
-	t.Run("missing required value", func(t *testing.T) {
+	t.Run("a shared failing dependency is reported once", func(t *testing.T) {
 		newTestContainer(t)
-		Register[mapValueTarget]()
+		Register[failingInit]()
+		Register[failingInitUser]()
 
-		_, err := GetObject[mapValueTarget]("")
-		assert.EqualError(t, err, "missing value <key1>")
-	})
-
-	t.Run("condition not returning bool", func(t *testing.T) {
-		newTestContainer(t)
-		Register[pluginOne](Conditional("1 + 1"))
-
-		_, err := GetInterface[Plugin]("")
-		assert.ErrorContains(t, err, "not return bool")
+		err := Start(context.Background())
+		assert.EqualError(t, err, `<github.com/sakuradon99/ioc.failingInit@""> init: init failed`)
 	})
 
 	t.Run("duplicate names in map", func(t *testing.T) {
 		newTestContainer(t)
 		Register[pluginOne](Name("same"))
 		Register[pluginTwo](Name("same"))
+		startContainer(t)
 
 		_, err := GetInterfaceMap[Plugin]("*")
-		assert.ErrorContains(t, err, `duplicate name`)
+		assert.ErrorContains(t, err, `duplicate name "same"`)
 	})
 }
 
 func TestTypeKindErrors(t *testing.T) {
 	newTestContainer(t)
+	startContainer(t)
 
 	obj, err := GetObject[int]("")
 	assert.Nil(t, obj)
@@ -861,43 +920,20 @@ func TestTypeKindErrors(t *testing.T) {
 
 	itf, err := GetInterface[valueHolder]("")
 	assert.Equal(t, valueHolder{}, itf)
-	assert.EqualError(t, err, "ref is not a interface")
+	assert.EqualError(t, err, "ref is not an interface")
 
 	itfList, err := GetInterfaceList[valueHolder]("")
 	assert.Nil(t, itfList)
-	assert.EqualError(t, err, "ref is not a interface")
+	assert.EqualError(t, err, "ref is not an interface")
 
 	itfMap, err := GetInterfaceMap[valueHolder]("")
 	assert.Nil(t, itfMap)
-	assert.EqualError(t, err, "ref is not a interface")
+	assert.EqualError(t, err, "ref is not an interface")
 }
 
 func TestAddNilValueProvider(t *testing.T) {
 	newTestContainer(t)
 	assert.EqualError(t, AddValueProvider(nil), "provider cannot be nil")
-}
-
-func TestPrintErrorInjectionStack(t *testing.T) {
-	t.Run("non injection error", func(t *testing.T) {
-		assert.Empty(t, PrintErrorInjectionStack(nil))
-		assert.Empty(t, PrintErrorInjectionStack(errors.New("normal error")))
-	})
-
-	t.Run("circular dependency", func(t *testing.T) {
-		newTestContainer(t)
-		Register[circularA]()
-		Register[circularB]()
-
-		a, err := GetObject[circularA]("")
-		assert.Nil(t, a)
-		require.EqualError(t, err, "circular dependency detected")
-
-		assert.Equal(t,
-			"** github.com/sakuradon99/ioc.circularA@\"\"\n"+
-				"-> github.com/sakuradon99/ioc.circularB@\"\"\n"+
-				"~> github.com/sakuradon99/ioc.circularA@\"\"",
-			PrintErrorInjectionStack(err))
-	})
 }
 
 // ---------------------------------------------------------------------------
@@ -930,4 +966,67 @@ func pluginIDs(plugins []Plugin) []string {
 		out[i] = p.ID()
 	}
 	return out
+}
+
+func TestOptionalObject(t *testing.T) {
+	t.Run("not initialized when nobody depends on it", func(t *testing.T) {
+		newTestContainer(t)
+		Register[requiredDependency](Optional()) // its dependency is missing, but it is never used
+		startContainer(t)
+
+		var err error
+		require.NotPanics(t, func() { _, err = GetObject[requiredDependency]("") })
+		assert.EqualError(t, err,
+			`object <github.com/sakuradon99/ioc.requiredDependency@""> is not initialized: optional objects are only initialized when depended on`)
+	})
+
+	t.Run("initialized when depended on", func(t *testing.T) {
+		newTestContainerWithConfig(t)
+		Register[valueHolder](Optional())
+		Register[holderRef]()
+		startContainer(t)
+
+		holder, err := GetObject[valueHolder]("")
+		require.NoError(t, err)
+		ref, err := GetObject[holderRef]("")
+		require.NoError(t, err)
+		assert.Same(t, holder, ref.holder)
+	})
+}
+
+func TestErrorInjectionStack(t *testing.T) {
+	t.Run("non injection error", func(t *testing.T) {
+		assert.Empty(t, ErrorInjectionStack(nil))
+		assert.Empty(t, ErrorInjectionStack(errors.New("normal error")))
+	})
+
+	t.Run("circular dependency", func(t *testing.T) {
+		newTestContainer(t)
+		Register[circularA]()
+		Register[circularB]()
+
+		err := Start(context.Background())
+		require.EqualError(t, err, "circular dependency detected")
+
+		assert.Equal(t,
+			"** github.com/sakuradon99/ioc.circularA@\"\"\n"+
+				"-> github.com/sakuradon99/ioc.circularB@\"\"\n"+
+				"~> github.com/sakuradon99/ioc.circularA@\"\"",
+			ErrorInjectionStack(err))
+		assert.Equal(t, ErrorInjectionStack(err), PrintErrorInjectionStack(err), "deprecated alias")
+	})
+
+	t.Run("missing dependency deep in the graph", func(t *testing.T) {
+		newTestContainer(t)
+		Register[requiredObjectDependencyUser]()
+		Register[requiredObjectDependency]()
+
+		err := Start(context.Background())
+		assert.EqualError(t, err,
+			`<github.com/sakuradon99/ioc.requiredObjectDependency@""> field holder: missing object <github.com/sakuradon99/ioc.valueHolder@"">`)
+		assert.Equal(t,
+			"** github.com/sakuradon99/ioc.requiredObjectDependencyUser@\"\"\n"+
+				"-> github.com/sakuradon99/ioc.requiredObjectDependency@\"\"",
+			ErrorInjectionStack(err))
+	})
 }

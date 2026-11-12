@@ -11,8 +11,6 @@ import (
 	"github.com/spf13/cast"
 )
 
-const TagPropertyKey = "property"
-
 var durationType = reflect.TypeOf(time.Duration(0))
 
 type valueMap map[string]any
@@ -46,6 +44,8 @@ type ValueManager interface {
 	// AddValueProvider adds a new value provider to the manager.
 	// The last added provider will be used first when retrieving values.
 	AddValueProvider(provider ValueProvider)
+	// Load calls the providers that are not loaded yet.
+	Load() error
 	GetProperty(expr string) (any, bool, error)
 	GetValueWithType(expr string, rtp reflect.Type) (any, bool, error)
 }
@@ -68,6 +68,13 @@ func (c *valueManagerImpl) AddValueProvider(provider ValueProvider) {
 	defer c.mu.Unlock()
 
 	c.valueProviders = append(c.valueProviders, provider)
+}
+
+func (c *valueManagerImpl) Load() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.loadProviders()
 }
 
 func (c *valueManagerImpl) loadProviders() error {
@@ -182,10 +189,15 @@ func convertStruct(property any, t reflect.Type) (any, error) {
 			continue
 		}
 
-		key := ParseTag(tagExpr).Value()
+		tag := ParseValueTag(tagExpr)
+		key := tag.Value()
 		v, ok := pm[key]
 		if !ok || v == nil {
-			continue
+			defaultValue, hasDefault := tag.Default()
+			if !hasDefault {
+				continue
+			}
+			v = defaultValue
 		}
 		if err = assignProperty(field, v); err != nil {
 			return nil, fmt.Errorf("property %q: %w", key, err)
@@ -354,5 +366,67 @@ func assignProperty(field Field, property any) error {
 		return err
 	}
 	field.Assign(v)
+	return nil
+}
+
+// validateValueType validates the default values of a value-tagged field at registration time,
+// including the defaults of `property` tags in the struct types it contains.
+func validateValueType(t reflect.Type, tag ValueTag) error {
+	if defaultValue, ok := tag.Default(); ok {
+		if err := validateDefaultValue(t, defaultValue); err != nil {
+			return err
+		}
+	}
+	return validatePropertyDefaults(t, make(map[reflect.Type]bool))
+}
+
+func validatePropertyDefaults(t reflect.Type, visited map[reflect.Type]bool) error {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map:
+		return validatePropertyDefaults(t.Elem(), visited)
+	case reflect.Struct:
+	default:
+		return nil
+	}
+	if t == durationType || visited[t] {
+		return nil
+	}
+	visited[t] = true
+
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if tagExpr, ok := f.Tag.Lookup(TagPropertyKey); ok {
+			tag := ParseValueTag(tagExpr)
+			if defaultValue, ok := tag.Default(); ok {
+				if err := validateDefaultValue(f.Type, defaultValue); err != nil {
+					return fmt.Errorf("property %q of %s: %w", tag.Value(), t, err)
+				}
+			}
+		}
+		if err := validatePropertyDefaults(f.Type, visited); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateDefaultValue checks the default value is convertible to t.
+// Only basic types, named basic types, time.Duration and pointers to them support default values.
+func validateDefaultValue(t reflect.Type, defaultValue string) error {
+	base := t
+	if base.Kind() == reflect.Pointer {
+		base = base.Elem()
+	}
+	switch base.Kind() {
+	case reflect.String, reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+	default:
+		return fmt.Errorf("default value is not supported for type <%s>", t)
+	}
+	if _, err := convertType(defaultValue, t); err != nil {
+		return fmt.Errorf("invalid default value: %w", err)
+	}
 	return nil
 }

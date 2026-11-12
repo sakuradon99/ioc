@@ -1,9 +1,8 @@
 package ioc
 
 import (
-	"sync"
+	"reflect"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,12 +13,19 @@ func TestParseTag(t *testing.T) {
 		expr         string
 		wantValue    string
 		wantOptional bool
+		wantDefault  string
+		hasDefault   bool
 	}{
 		{expr: "", wantValue: ""},
 		{expr: "name", wantValue: "name"},
 		{expr: ";optional", wantValue: "", wantOptional: true},
 		{expr: "name*;optional", wantValue: "name*", wantOptional: true},
 		{expr: "name;other", wantValue: "name"},
+		{expr: "port;default=8080", wantValue: "port", wantDefault: "8080", hasDefault: true},
+		{expr: "s;default=", wantValue: "s", wantDefault: "", hasDefault: true},
+		{expr: "s;default=a=b", wantValue: "s", wantDefault: "a=b", hasDefault: true},
+		{expr: "s;optional;default=x", wantValue: "s", wantOptional: true, wantDefault: "x", hasDefault: true},
+		{expr: "s;defaults=x", wantValue: "s"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -30,7 +36,38 @@ func TestParseTag(t *testing.T) {
 			valueTag := ParseValueTag(tt.expr)
 			assert.Equal(t, tt.wantValue, valueTag.Value())
 			assert.Equal(t, tt.wantOptional, valueTag.Optional())
+			defaultValue, ok := valueTag.Default()
+			assert.Equal(t, tt.hasDefault, ok)
+			assert.Equal(t, tt.wantDefault, defaultValue)
 		})
+	}
+}
+
+func TestValidateDefaultValue(t *testing.T) {
+	type named int
+	tests := []struct {
+		rtp     reflect.Type
+		value   string
+		wantErr bool
+	}{
+		{rtp: typeOf[string](), value: "x"},
+		{rtp: typeOf[*int](), value: "3"},
+		{rtp: typeOf[named](), value: "3"},
+		{rtp: typeOf[bool](), value: "true"},
+		{rtp: typeOf[float64](), value: "0.5"},
+		{rtp: typeOf[int](), value: "x", wantErr: true},
+		{rtp: typeOf[uint8](), value: "300", wantErr: true},
+		{rtp: typeOf[[]string](), value: "a", wantErr: true},
+		{rtp: typeOf[map[string]int](), value: "a", wantErr: true},
+		{rtp: typeOf[struct{}](), value: "a", wantErr: true},
+	}
+	for _, tt := range tests {
+		err := validateDefaultValue(tt.rtp, tt.value)
+		if tt.wantErr {
+			assert.Error(t, err, "%s <- %q", tt.rtp, tt.value)
+		} else {
+			assert.NoError(t, err, "%s <- %q", tt.rtp, tt.value)
+		}
 	}
 }
 
@@ -106,83 +143,5 @@ func TestConditionExecutor(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
-	}
-}
-
-func TestReentrantMutex(t *testing.T) {
-	t.Run("same goroutine can lock again", func(t *testing.T) {
-		var m reentrantMutex
-		done := make(chan struct{})
-		go func() {
-			m.Lock()
-			m.Lock()
-			m.Unlock()
-			m.Unlock()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-			t.Fatal("reentrant lock blocked")
-		}
-	})
-
-	t.Run("excludes other goroutines", func(t *testing.T) {
-		var (
-			m       reentrantMutex
-			wg      sync.WaitGroup
-			counter int
-		)
-		for i := 0; i < 50; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < 100; j++ {
-					m.Lock()
-					m.Lock()
-					counter++
-					m.Unlock()
-					m.Unlock()
-				}
-			}()
-		}
-		wg.Wait()
-		assert.Equal(t, 5000, counter)
-	})
-}
-
-func TestGoroutineID(t *testing.T) {
-	main := goroutineID()
-	assert.Positive(t, main)
-
-	other := make(chan int64)
-	go func() { other <- goroutineID() }()
-	assert.NotEqual(t, main, <-other)
-}
-
-type concurrentObj struct {
-	dep *depObj `inject:""`
-}
-
-func TestConcurrentGetObject(t *testing.T) {
-	c := NewContainerImpl()
-	require.NoError(t, c.Register(typeOf[depObj]()))
-	require.NoError(t, c.Register(typeOf[concurrentObj]()))
-
-	var wg sync.WaitGroup
-	results := make([]any, 20)
-	for i := range results {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			obj, err := c.GetObject("", typeOf[concurrentObj]())
-			assert.NoError(t, err)
-			results[i] = obj
-		}(i)
-	}
-	wg.Wait()
-
-	for _, r := range results[1:] {
-		assert.Same(t, results[0], r, "singleton must be created once")
 	}
 }

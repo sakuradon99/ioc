@@ -7,174 +7,85 @@ type Dependency interface {
 	RType() reflect.Type
 	Optional() bool
 	FullType() string
+	// Location describes where the dependency is declared, e.g. `field repo` or `constructor param #0`.
+	Location() string
 	isInterface() bool
 }
 
-type valueDependency struct {
-	keyExpr  string
+type baseDependency struct {
+	nameExpr string
 	rtp      reflect.Type
 	optional bool
 	fullType string
+	location string
 }
 
-func newValueDependency(keyExpr string, rtp reflect.Type, optional bool) *valueDependency {
-	return &valueDependency{
-		keyExpr:  keyExpr,
+func newBaseDependency(nameExpr string, rtp reflect.Type, optional bool, location string) baseDependency {
+	return baseDependency{
+		nameExpr: nameExpr,
 		rtp:      rtp,
 		optional: optional,
 		fullType: generateFullType(rtp),
+		location: location,
 	}
 }
 
-func (d *valueDependency) NameExpr() string {
-	return d.keyExpr
+func (d *baseDependency) NameExpr() string    { return d.nameExpr }
+func (d *baseDependency) RType() reflect.Type { return d.rtp }
+func (d *baseDependency) Optional() bool      { return d.optional }
+func (d *baseDependency) FullType() string    { return d.fullType }
+func (d *baseDependency) Location() string    { return d.location }
+func (d *baseDependency) isInterface() bool   { return d.rtp.Kind() == reflect.Interface }
+
+type valueDependency struct {
+	baseDependency
+	defaultValue    string
+	hasDefaultValue bool
 }
 
-func (d *valueDependency) RType() reflect.Type {
-	return d.rtp
-}
-
-func (d *valueDependency) Optional() bool {
-	return d.optional
-}
-
-func (d *valueDependency) FullType() string {
-	return d.fullType
-}
-
-func (d *valueDependency) isInterface() bool {
-	return false
+func newValueDependency(tag ValueTag, rtp reflect.Type, location string) *valueDependency {
+	defaultValue, hasDefaultValue := tag.Default()
+	return &valueDependency{
+		baseDependency:  newBaseDependency(tag.Value(), rtp, tag.Optional(), location),
+		defaultValue:    defaultValue,
+		hasDefaultValue: hasDefaultValue,
+	}
 }
 
 type objectDependency struct {
-	nameExpr string
-	rtp      reflect.Type
-	optional bool
-	fullType string
-	// anyName allows falling back to an object with any name when no object matches nameExpr.
-	// Used for constructor params, which have no tag to specify a name.
-	anyName bool
+	baseDependency
 }
 
-// newConstructorParamDependency creates a required dependency for a constructor param.
-// It prefers the object with empty name, and falls back to the only object of that type with any name.
-func newConstructorParamDependency(rtp reflect.Type) *objectDependency {
-	d := newObjectDependency("", rtp, false)
-	d.anyName = true
-	return d
-}
-
-func newObjectDependency(nameExpr string, rtp reflect.Type, optional bool) *objectDependency {
-	return &objectDependency{
-		nameExpr: nameExpr,
-		rtp:      rtp,
-		optional: optional,
-		fullType: generateFullType(rtp),
-	}
-}
-
-func (d *objectDependency) NameExpr() string {
-	return d.nameExpr
-}
-
-func (d *objectDependency) RType() reflect.Type {
-	return d.rtp
-}
-
-func (d *objectDependency) Optional() bool {
-	return d.optional
-}
-
-func (d *objectDependency) FullType() string {
-	return d.fullType
-}
-
-func (d *objectDependency) isInterface() bool {
-	return d.rtp.Kind() == reflect.Interface
+func newObjectDependency(nameExpr string, rtp reflect.Type, optional bool, location string) *objectDependency {
+	return &objectDependency{newBaseDependency(nameExpr, rtp, optional, location)}
 }
 
 type objectListDependency struct {
-	nameExpr string
-	rtp      reflect.Type
-	optional bool
-	fullType string
+	baseDependency
 }
 
-func newObjectListDependency(nameExpr string, rtp reflect.Type, optional bool) *objectListDependency {
-	return &objectListDependency{
-		nameExpr: nameExpr,
-		rtp:      rtp,
-		optional: optional,
-		fullType: generateFullType(rtp),
-	}
-}
-
-func (d *objectListDependency) NameExpr() string {
-	return d.nameExpr
-}
-
-func (d *objectListDependency) RType() reflect.Type {
-	return d.rtp
-}
-
-func (d *objectListDependency) Optional() bool {
-	return d.optional
-}
-
-func (d *objectListDependency) FullType() string {
-	return d.fullType
-}
-
-func (d *objectListDependency) isInterface() bool {
-	return d.rtp.Kind() == reflect.Interface
+func newObjectListDependency(nameExpr string, rtp reflect.Type, optional bool, location string) *objectListDependency {
+	return &objectListDependency{newBaseDependency(nameExpr, rtp, optional, location)}
 }
 
 func (d *objectListDependency) SliceType() reflect.Type {
-	if d.RType().Kind() == reflect.Interface {
-		return reflect.SliceOf(d.RType())
+	if d.isInterface() {
+		return reflect.SliceOf(d.rtp)
 	}
-	return reflect.SliceOf(reflect.New(d.rtp).Type())
+	return reflect.SliceOf(reflect.PointerTo(d.rtp))
 }
 
 type objectMapDependency struct {
-	nameExpr string
-	rtp      reflect.Type
-	optional bool
-	fullType string
+	baseDependency
 }
 
-func newObjectMapDependency(nameExpr string, rtp reflect.Type, optional bool) *objectMapDependency {
-	return &objectMapDependency{
-		nameExpr: nameExpr,
-		rtp:      rtp,
-		optional: optional,
-		fullType: generateFullType(rtp),
-	}
-}
-
-func (d *objectMapDependency) NameExpr() string {
-	return d.nameExpr
-}
-
-func (d *objectMapDependency) RType() reflect.Type {
-	return d.rtp
-}
-
-func (d *objectMapDependency) Optional() bool {
-	return d.optional
-}
-
-func (d *objectMapDependency) FullType() string {
-	return d.fullType
-}
-
-func (d *objectMapDependency) isInterface() bool {
-	return d.rtp.Kind() == reflect.Interface
+func newObjectMapDependency(nameExpr string, rtp reflect.Type, optional bool, location string) *objectMapDependency {
+	return &objectMapDependency{newBaseDependency(nameExpr, rtp, optional, location)}
 }
 
 func (d *objectMapDependency) MapType() reflect.Type {
-	if d.RType().Kind() == reflect.Interface {
-		return reflect.MapOf(reflect.TypeOf(""), d.RType())
+	if d.isInterface() {
+		return reflect.MapOf(reflect.TypeOf(""), d.rtp)
 	}
-	return reflect.MapOf(reflect.TypeOf(""), reflect.New(d.RType()).Type())
+	return reflect.MapOf(reflect.TypeOf(""), reflect.PointerTo(d.rtp))
 }

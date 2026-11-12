@@ -4,11 +4,12 @@ import ioc "github.com/sakuradon99/ioc/internal"
 
 type RegisterOption = ioc.RegisterOption
 
-// Name sets the name expression for the registered object.
-// The name expression can be used to inject the object by name, without this option, the name will be empty "".
+// Name sets the name of the registered object, without this option, the name will be empty "".
 // Example: `Name("myService")`, in the field, you can use `inject:"myService"` to inject this object.
-// The name expression can be a simple string or a glob pattern.
+// The inject expression can be a simple string or a glob pattern.
 // Example: `inject:"myService*"` will match any object whose name starts with "myService".
+// An empty inject expression `inject:""` matches by type: the only unnamed object is used,
+// otherwise the only Primary object, otherwise the only object of the type. Anything else is an error.
 func Name(name string) ioc.RegisterOption {
 	return func(o *ioc.RegisterOptions) {
 		o.Name = name
@@ -30,11 +31,20 @@ func Alias(aliases ...string) ioc.RegisterOption {
 	}
 }
 
-// Optional marks the registered object as optional
-// If the object is not found, will inject nil to the field instead of panic.
+// Optional marks the registered object as optional.
+// An optional object is not initialized on Start unless another object depends on it,
+// so its dependencies may be missing as long as nobody uses it.
 func Optional() ioc.RegisterOption {
 	return func(o *ioc.RegisterOptions) {
 		o.Optional = true
+	}
+}
+
+// Primary marks the registered object as the default one when multiple objects match an empty name expression,
+// e.g. `inject:""` or `GetInterface[T]("")`. It has no effect when a name is specified, or for lists and maps.
+func Primary() ioc.RegisterOption {
+	return func(o *ioc.RegisterOptions) {
+		o.Primary = true
 	}
 }
 
@@ -47,9 +57,8 @@ func Optional() ioc.RegisterOption {
 // - `func(Dependency1, Dependency2...) (*Object, error)`
 // Example: `Constructor(func() *MyService { return &MyService{} })`
 // The type of dependencies can only be pointer, interface or struct.
-// If the dependency is pointer or interface, it will be injected automatically by the IOC container.
-// Such a dependency is required: the object registered without a name is preferred,
-// otherwise the only object of that type (with any name) is used. A missing or ambiguous dependency is an error.
+// If the dependency is pointer or interface, it will be injected automatically by the IOC container,
+// matched by type like `inject:""`. Such a dependency is required.
 // If the dependency is a struct, the container will create a new instance of the struct and inject its fields.
 func Constructor(constructor any) ioc.RegisterOption {
 	return func(o *ioc.RegisterOptions) {
@@ -59,6 +68,7 @@ func Constructor(constructor any) ioc.RegisterOption {
 
 // Conditional sets a condition expression for the registered object.
 // The object will only be registered if the condition expression evaluates to true.
+// The condition is evaluated once on Start.
 // You can use `#` to refer the provided value in the condition expression.
 // Example: `Conditional("#app.name == 'myApp'")`
 func Conditional(expr string) ioc.RegisterOption {

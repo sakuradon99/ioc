@@ -95,3 +95,15 @@ func (b *constructorInstanceBuilder) Build(args []any) (any, error) {
 
 	return outcomes[0].Interface(), nil
 }
+
+type providedInstanceBuilder struct {
+	instance any
+}
+
+func newProvidedInstanceBuilder(instance any) *providedInstanceBuilder {
+	return &providedInstanceBuilder{instance: instance}
+}
+
+func (b *providedInstanceBuilder) Build([]any) (any, error) {
+	return b.instance, nil
+}
